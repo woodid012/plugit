@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill:*)",
+      "Bash(curl:*)",
+      "Bash(mkdir:*)",
+      "Bash(pip install:*)",
+      "Bash(find_device_ip.bat:*)",
+      "Bash(arp:*)",
+      "Bash(timeout 2 sleep 2:*)",
+      "Bash(nul)",
+      "Bash(exit 0)",
+      "Bash(mv:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

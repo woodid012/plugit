@@ -1,0 +1,17 @@
+# Web Server
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# Tapo Devices
+tapo>=0.8.7
+
+# Meross Devices
+meross_iot>=0.4.7.1
+
+# Arlec Devices (Tuya)
+tinytuya>=1.13.0
+
+# Power Price Data Fetcher
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+pytz>=2023.3

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python fetch_prices.py:*)",
+      "Bash(python:*)",
+      "Bash(cat:*)",
+      "Bash(curl:*)",
+      "Bash(powershell -Command \"Get-Process -Id (Get-NetTCPConnection -LocalPort 5000).OwningProcess | Stop-Process -Force\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

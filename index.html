@@ -1,0 +1,2385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Home Control</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            color: #333;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 1.1em;
+        }
+
+        .header-content {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .refresh-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s;
+            white-space: nowrap;
+        }
+
+        .refresh-btn:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .device-group {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            margin-bottom: 25px;
+        }
+
+        .group-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .group-icon {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin-right: 15px;
+        }
+
+        .tapo-icon {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+        }
+
+        .meross-icon {
+            background: linear-gradient(135deg, #f093fb, #f5576c);
+        }
+
+        .arlec-icon {
+            background: linear-gradient(135deg, #fad961, #f76b1c);
+        }
+
+        .matter-icon {
+            background: linear-gradient(135deg, #4facfe, #00f2fe);
+        }
+
+        .group-title {
+            font-size: 1.8em;
+            color: #333;
+            font-weight: 600;
+        }
+
+        .group-count {
+            margin-left: auto;
+            background: #f0f0f0;
+            padding: 5px 15px;
+            border-radius: 20px;
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .devices-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 15px;
+        }
+
+        .device-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+
+        .device-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        .device-card.online {
+            border-color: #4CAF50;
+        }
+
+        .device-card.offline {
+            border-color: #f44336;
+            opacity: 0.6;
+        }
+
+        .device-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .device-name {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .device-type-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 10px;
+            font-size: 0.7em;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+            letter-spacing: 0.5px;
+        }
+
+        .device-type-tapo {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+        }
+
+        .device-type-meross {
+            background: linear-gradient(135deg, #f093fb, #f5576c);
+            color: white;
+        }
+
+        .device-type-arlec {
+            background: linear-gradient(135deg, #fad961, #f76b1c);
+            color: white;
+        }
+
+        .device-type-matter {
+            background: linear-gradient(135deg, #4facfe, #00f2fe);
+            color: white;
+        }
+
+        .status-badge {
+            padding: 5px 12px;
+            border-radius: 15px;
+            font-size: 0.85em;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-on {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .status-off {
+            background: #9e9e9e;
+            color: white;
+        }
+
+        .status-offline {
+            background: #f44336;
+            color: white;
+        }
+
+        .device-info {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 15px;
+        }
+
+        .device-controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        .control-btn {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+        }
+
+        .btn-on {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .btn-on:hover {
+            background: #45a049;
+            transform: scale(1.05);
+        }
+
+        .btn-off {
+            background: #f44336;
+            color: white;
+        }
+
+        .btn-off:hover {
+            background: #da190b;
+            transform: scale(1.05);
+        }
+
+        .btn-toggle {
+            background: #2196F3;
+            color: white;
+        }
+
+        .btn-toggle:hover {
+            background: #0b7dda;
+            transform: scale(1.05);
+        }
+
+        .control-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: white;
+            font-size: 1.2em;
+        }
+
+        .error {
+            background: #f44336;
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .no-devices {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+            font-size: 1.1em;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        .loading-pulse {
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        .last-updated {
+            text-align: center;
+            color: white;
+            margin-top: 20px;
+            font-size: 0.9em;
+        }
+
+        .chart-container {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            margin-bottom: 25px;
+        }
+
+        .chart-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .chart-totals {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 8px;
+            margin-left: auto;
+        }
+
+        .daily-total, .savings-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .total-label, .savings-label {
+            color: #666;
+            font-size: 0.9em;
+            font-weight: 500;
+        }
+
+        .total-value, .savings-value {
+            color: #333;
+            font-size: 1.1em;
+            font-weight: 600;
+        }
+
+        .total-value {
+            color: #667eea;
+        }
+
+        .savings-value {
+            color: #4CAF50;
+        }
+
+        .chart-icon {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin-right: 15px;
+            background: linear-gradient(135deg, #4facfe, #00f2fe);
+        }
+
+        .chart-title {
+            font-size: 1.8em;
+            color: #333;
+            font-weight: 600;
+        }
+
+        .chart-wrapper {
+            position: relative;
+            height: 300px;
+        }
+
+        /* Style chart legend to wrap forecast items to new line */
+        .chart-wrapper canvas + div {
+            display: flex !important;
+            flex-wrap: wrap !important;
+            justify-content: center;
+        }
+
+        /* Target Chart.js legend items containing "Forecast" */
+        .chart-wrapper ul li {
+            position: relative;
+        }
+
+        /* Style forecast legend items to appear on new line */
+        .chart-wrapper ul li.forecast-legend-item {
+            flex-basis: 100% !important;
+            width: 100% !important;
+            margin-top: 10px !important;
+            padding-top: 10px !important;
+            border-top: 1px solid #e0e0e0 !important;
+            clear: both;
+        }
+
+
+        .export-csv-btn {
+            margin-left: auto;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 0.9em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            white-space: nowrap;
+        }
+
+        .export-csv-btn:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(76, 175, 80, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-content">
+                <h1>🏠 Smart Home Control</h1>
+                <p class="subtitle">Control all your smart devices from one place</p>
+            </div>
+            <button class="refresh-btn" onclick="loadDevices(true);">🔄 Refresh Devices</button>
+        </header>
+
+        <div id="error-container"></div>
+        <div id="loading" class="loading loading-pulse">Loading devices...</div>
+        <div id="content" style="display: none;">
+            <!-- Power Usage Chart -->
+            <div class="chart-container" id="chart-section" style="display: none;">
+                <div class="chart-header">
+                    <div class="chart-icon">📊</div>
+                    <h2 class="chart-title">Power Usage (30-second intervals)</h2>
+                    <button class="export-csv-btn" onclick="exportTimeseriesToCSV()">📥 Export to CSV</button>
+                </div>
+                <div class="chart-wrapper">
+                    <canvas id="powerChart"></canvas>
+                </div>
+            </div>
+            <!-- Cost Chart -->
+            <div class="chart-container" id="cost-chart-section" style="display: none;">
+                <div class="chart-header">
+                    <div class="chart-icon">💰</div>
+                    <h2 class="chart-title">Estimated Cost (5-minute intervals)</h2>
+                    <div class="chart-totals">
+                        <div class="daily-total">
+                            <span class="total-label">Total Today:</span>
+                            <span class="total-value" id="daily-total-value">$0.00</span>
+                        </div>
+                        <div class="savings-info">
+                            <span class="savings-label">Savings (12pm-3pm free):</span>
+                            <span class="savings-value" id="savings-value">$0.00</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="chart-wrapper">
+                    <canvas id="costChart"></canvas>
+                </div>
+            </div>
+            <!-- Power Price Chart -->
+            <div class="chart-container" id="price-chart-section" style="display: none;">
+                <div class="chart-header">
+                    <div class="chart-icon">⚡</div>
+                    <h2 class="chart-title">Power Price (5-minute intervals)</h2>
+                </div>
+                <div class="chart-wrapper">
+                    <canvas id="priceChart"></canvas>
+                </div>
+            </div>
+            <!-- All Devices in One Grid -->
+            <div class="device-group">
+                <div class="group-header">
+                    <div class="group-icon tapo-icon">🏠</div>
+                    <h2 class="group-title">All Devices</h2>
+                </div>
+                <div class="devices-grid" id="all-devices"></div>
+            </div>
+        </div>
+
+        <div class="last-updated" id="last-updated"></div>
+    </div>
+
+    <script>
+        let autoRefreshInterval;
+        let isInitialLoad = true;
+        let timeseriesCollectionInterval = null;
+        let currentDevicesData = []; // Store current device data for timeseries collection
+
+        async function loadDevices(showLoading = false) {
+            const errorContainer = document.getElementById('error-container');
+            const loading = document.getElementById('loading');
+            const content = document.getElementById('content');
+
+            // Only show loading screen on initial load
+            if (showLoading) {
+                errorContainer.innerHTML = '';
+                loading.style.display = 'block';
+                content.style.display = 'none';
+            }
+
+            try {
+                const response = await fetch('/api/devices');
+                const data = await response.json();
+
+                if (!data.success) {
+                    throw new Error(data.error || 'Failed to load devices');
+                }
+
+                // Combine all devices and render in one grid
+                const allDevices = [];
+                
+                // Add Tapo devices with type label
+                (data.tapo || []).forEach(device => {
+                    allDevices.push({...device, deviceType: 'tapo'});
+                });
+                
+                // Add Meross devices with type label
+                (data.meross || []).forEach(device => {
+                    allDevices.push({...device, deviceType: 'meross'});
+                });
+                
+                // Add Arlec devices with type label
+                (data.arlec || []).forEach(device => {
+                    allDevices.push({...device, deviceType: 'arlec'});
+                });
+                
+                // Add Matter devices with type label
+                (data.matter || []).forEach(device => {
+                    allDevices.push({...device, deviceType: 'matter'});
+                });
+                
+                // Store device data for timeseries collection
+                currentDevicesData = allDevices;
+                
+                // Render all devices in one grid
+                renderAllDevices(allDevices);
+
+                if (showLoading) {
+                    loading.style.display = 'none';
+                    content.style.display = 'block';
+                }
+
+                updateLastUpdated();
+
+            } catch (error) {
+                console.error('Error loading devices:', error);
+                if (showLoading) {
+                    errorContainer.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+                    loading.style.display = 'none';
+                }
+            }
+        }
+
+        function renderAllDevices(devices) {
+            const container = document.getElementById('all-devices');
+            const group = document.querySelector('.device-group');
+
+            if (devices.length === 0) {
+                container.innerHTML = '<div class="no-devices">No devices found</div>';
+                return;
+            }
+
+            group.style.display = 'block';
+            container.innerHTML = devices.map(device => {
+                // Build energy info string if available
+                let energyInfo = '';
+                if (device.power !== undefined) {
+                    energyInfo = `<br><strong>⚡ Power:</strong> ${device.power.toFixed(1)} W`;
+                    if (device.current !== undefined) {
+                        energyInfo += `<br><strong>🔌 Current:</strong> ${device.current.toFixed(2)} A`;
+                    }
+                    if (device.voltage !== undefined) {
+                        energyInfo += `<br><strong>⚙️ Voltage:</strong> ${device.voltage.toFixed(1)} V`;
+                    }
+                }
+                
+                // Determine device type badge
+                const deviceType = device.deviceType || 'tapo';
+                const typeBadgeClass = `device-type-${deviceType}`;
+                const typeLabel = deviceType.toUpperCase();
+                
+                // Determine control function based on device type
+                let onControl = '';
+                let offControl = '';
+                let toggleControl = '';
+                
+                if (deviceType === 'tapo') {
+                    onControl = `controlTapo('${device.id}', 'on')`;
+                    offControl = `controlTapo('${device.id}', 'off')`;
+                } else if (deviceType === 'meross') {
+                    onControl = `controlMeross('${device.uuid}', 'on')`;
+                    offControl = `controlMeross('${device.uuid}', 'off')`;
+                    toggleControl = `controlMeross('${device.uuid}', 'toggle')`;
+                } else if (deviceType === 'arlec') {
+                    onControl = `controlArlec('${device.uuid}', 'on')`;
+                    offControl = `controlArlec('${device.uuid}', 'off')`;
+                    toggleControl = `controlArlec('${device.uuid}', 'toggle')`;
+                } else if (deviceType === 'matter') {
+                    const deviceId = device.id || device.uuid;
+                    onControl = `controlMatter('${deviceId}', 'on')`;
+                    offControl = `controlMatter('${deviceId}', 'off')`;
+                    toggleControl = `controlMatter('${deviceId}', 'toggle')`;
+                }
+                
+                return `
+                <div class="device-card ${device.online ? 'online' : 'offline'}">
+                    <div style="margin-bottom: 10px;">
+                        <span class="device-type-badge ${typeBadgeClass}">${typeLabel}</span>
+                    </div>
+                    <div class="device-header">
+                        <div class="device-name">${device.name}</div>
+                        <span class="status-badge ${
+                            !device.online ? 'status-offline' :
+                            device.status === 'on' ? 'status-on' : 'status-off'
+                        }">
+                            ${!device.online ? 'Offline' : device.status.toUpperCase()}
+                        </span>
+                    </div>
+                    <div class="device-info">
+                        ${device.type}${energyInfo}
+                    </div>
+                    <div class="device-controls">
+                        <button class="control-btn btn-on"
+                                onclick="${onControl}"
+                                ${!device.online ? 'disabled' : ''}>
+                            ON
+                        </button>
+                        <button class="control-btn btn-off"
+                                onclick="${offControl}"
+                                ${!device.online ? 'disabled' : ''}>
+                            OFF
+                        </button>
+                    </div>
+                </div>
+            `;
+            }).join('');
+        }
+
+        // Optimistically update device status in the UI before server confirms
+        function updateDeviceStatusOptimistically(deviceId, action, deviceType) {
+            // Find the device in currentDevicesData
+            const device = currentDevicesData.find(d => {
+                if (deviceType === 'tapo') {
+                    return d.id === deviceId;
+                } else if (deviceType === 'matter') {
+                    return (d.id === deviceId) || (d.uuid === deviceId);
+                } else {
+                    return d.uuid === deviceId;
+                }
+            });
+            
+            if (device) {
+                // Update the status optimistically
+                if (action === 'on') {
+                    device.status = 'on';
+                } else if (action === 'off') {
+                    device.status = 'off';
+                } else if (action === 'toggle') {
+                    device.status = device.status === 'on' ? 'off' : 'on';
+                }
+                
+                // Immediately re-render the cards with updated status
+                renderAllDevices(currentDevicesData);
+            }
+        }
+
+        async function controlTapo(deviceId, action) {
+            // Optimistically update the UI immediately
+            updateDeviceStatusOptimistically(deviceId, action, 'tapo');
+            
+            try {
+                const response = await fetch(`/api/tapo/${deviceId}/${action}`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    // Immediate refresh to get actual device state
+                    await loadDevices(false);
+                    // Second refresh after 1 second to ensure we catch any delayed state changes
+                    setTimeout(() => loadDevices(false), 1000);
+                } else {
+                    // Revert optimistic update on error
+                    loadDevices(false);
+                    alert(`Error: ${data.error}`);
+                }
+            } catch (error) {
+                // Revert optimistic update on error
+                loadDevices(false);
+                console.error('Error controlling Tapo device:', error);
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        async function controlMeross(uuid, action) {
+            // Optimistically update the UI immediately
+            updateDeviceStatusOptimistically(uuid, action, 'meross');
+            
+            try {
+                const response = await fetch(`/api/meross/${uuid}/${action}`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    // Immediate refresh to get actual device state
+                    await loadDevices(false);
+                    // Second refresh after 1 second to ensure we catch any delayed state changes
+                    setTimeout(() => loadDevices(false), 1000);
+                } else {
+                    // Revert optimistic update on error
+                    loadDevices(false);
+                    alert(`Error: ${data.error}`);
+                }
+            } catch (error) {
+                // Revert optimistic update on error
+                loadDevices(false);
+                console.error('Error controlling Meross device:', error);
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        function renderArlecDevices(devices) {
+            const container = document.getElementById('arlec-devices');
+            const group = document.getElementById('arlec-group');
+            const count = document.getElementById('arlec-count');
+
+            if (devices.length === 0) {
+                group.style.display = 'none';
+                return;
+            }
+
+            group.style.display = 'block';
+            count.textContent = `${devices.length} device${devices.length !== 1 ? 's' : ''}`;
+
+            container.innerHTML = devices.map(device => {
+                let energyInfo = '';
+                if (device.power !== undefined) {
+                    energyInfo = `<br><strong>⚡ Power:</strong> ${device.power.toFixed(1)} W`;
+                    if (device.current !== undefined) {
+                        energyInfo += `<br><strong>🔌 Current:</strong> ${device.current.toFixed(2)} A`;
+                    }
+                    if (device.voltage !== undefined) {
+                        energyInfo += `<br><strong>⚙️ Voltage:</strong> ${device.voltage.toFixed(1)} V`;
+                    }
+                }
+
+                return `
+                <div class="device-card ${device.online ? 'online' : 'offline'}">
+                    <div class="device-header">
+                        <div class="device-name">${device.name}</div>
+                        <span class="status-badge ${
+                            !device.online ? 'status-offline' :
+                            device.status === 'on' ? 'status-on' : 'status-off'
+                        }">
+                            ${!device.online ? 'Offline' : device.status.toUpperCase()}
+                        </span>
+                    </div>
+                    <div class="device-info">
+                        ${device.type}${energyInfo}
+                    </div>
+                    <div class="device-controls">
+                        <button class="control-btn btn-on"
+                                onclick="controlArlec('${device.uuid}', 'on')"
+                                ${!device.online ? 'disabled' : ''}>
+                            ON
+                        </button>
+                        <button class="control-btn btn-off"
+                                onclick="controlArlec('${device.uuid}', 'off')"
+                                ${!device.online ? 'disabled' : ''}>
+                            OFF
+                        </button>
+                    </div>
+                </div>
+                `;
+            }).join('');
+        }
+
+        async function controlArlec(uuid, action) {
+            // Optimistically update the UI immediately
+            updateDeviceStatusOptimistically(uuid, action, 'arlec');
+            
+            try {
+                const response = await fetch(`/api/arlec/${uuid}/${action}`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    // Immediate refresh to get actual device state
+                    await loadDevices(false);
+                    // Second refresh after 1 second to ensure we catch any delayed state changes
+                    setTimeout(() => loadDevices(false), 1000);
+                } else {
+                    // Revert optimistic update on error
+                    loadDevices(false);
+                    alert(`Error: ${data.error}`);
+                }
+            } catch (error) {
+                // Revert optimistic update on error
+                loadDevices(false);
+                console.error('Error controlling Arlec device:', error);
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        async function controlMatter(deviceId, action) {
+            // Optimistically update the UI immediately
+            updateDeviceStatusOptimistically(deviceId, action, 'matter');
+            
+            try {
+                const response = await fetch(`/api/matter/${deviceId}/${action}`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    // Immediate refresh to get actual device state
+                    await loadDevices(false);
+                    // Second refresh after 1 second to ensure we catch any delayed state changes
+                    setTimeout(() => loadDevices(false), 1000);
+                } else {
+                    // Revert optimistic update on error
+                    loadDevices(false);
+                    alert(`Error: ${data.error}`);
+                }
+            } catch (error) {
+                // Revert optimistic update on error
+                loadDevices(false);
+                console.error('Error controlling Matter device:', error);
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        function updateLastUpdated() {
+            const lastUpdated = document.getElementById('last-updated');
+            const now = new Date();
+            lastUpdated.textContent = `Last updated: ${now.toLocaleTimeString()}`;
+        }
+
+        // Chart management
+        let powerChart = null;
+        let costChart = null;
+        let priceChart = null;
+        let powerChartTimestamps = []; // Store power chart timestamps for cost chart alignment
+        let powerChartLabels = []; // Store power chart labels for cost chart alignment
+        let powerChartForecastStartIndex = 0; // Store forecast start index
+        let powerChartData = null; // Store power chart data for cost calculation
+        
+        // Browser-side timeseries cache (localStorage)
+        const TIMESERIES_CACHE_KEY = 'smart_home_timeseries_data';
+        const MAX_CACHE_POINTS = 2880; // 24 hours * 60 minutes * 2 (30-second intervals)
+        
+        // Load timeseries data from localStorage
+        function loadTimeseriesFromCache() {
+            try {
+                const cached = localStorage.getItem(TIMESERIES_CACHE_KEY);
+                if (cached) {
+                    return JSON.parse(cached);
+                }
+            } catch (e) {
+                console.error('Error loading timeseries from cache:', e);
+            }
+            return {};
+        }
+        
+        // Save timeseries data to localStorage
+        function saveTimeseriesToCache(timeseriesData) {
+            try {
+                // Limit cache size per device
+                const limitedData = {};
+                for (const [deviceId, deviceData] of Object.entries(timeseriesData)) {
+                    const data = deviceData.data || [];
+                    // Keep only the most recent MAX_CACHE_POINTS
+                    const limitedPoints = data.slice(-MAX_CACHE_POINTS);
+                    limitedData[deviceId] = {
+                        name: deviceData.name,
+                        data: limitedPoints
+                    };
+                }
+                localStorage.setItem(TIMESERIES_CACHE_KEY, JSON.stringify(limitedData));
+            } catch (e) {
+                console.error('Error saving timeseries to cache:', e);
+                // If storage is full, try to clear old data
+                try {
+                    const cached = loadTimeseriesFromCache();
+                    // Keep only last 50% of data
+                    const reducedData = {};
+                    for (const [deviceId, deviceData] of Object.entries(cached)) {
+                        const data = deviceData.data || [];
+                        const reducedPoints = data.slice(Math.floor(data.length / 2));
+                        reducedData[deviceId] = {
+                            name: deviceData.name,
+                            data: reducedPoints
+                        };
+                    }
+                    localStorage.setItem(TIMESERIES_CACHE_KEY, JSON.stringify(reducedData));
+                } catch (e2) {
+                    console.error('Error reducing cache size:', e2);
+                }
+            }
+        }
+        
+        // Add data point to cache
+        function addToTimeseriesCache(deviceId, deviceName, power, timestamp) {
+            const cached = loadTimeseriesFromCache();
+            
+            if (!cached[deviceId]) {
+                cached[deviceId] = {
+                    name: deviceName,
+                    data: []
+                };
+            }
+            
+            cached[deviceId].name = deviceName; // Update name in case it changed
+            cached[deviceId].data.push({
+                timestamp: timestamp,
+                power: power
+            });
+            
+            // Limit size per device
+            if (cached[deviceId].data.length > MAX_CACHE_POINTS) {
+                cached[deviceId].data = cached[deviceId].data.slice(-MAX_CACHE_POINTS);
+            }
+            
+            saveTimeseriesToCache(cached);
+        }
+
+        // Helper function to format timestamp label based on interval
+        function formatTimestampLabel(date, intervalSeconds) {
+            if (intervalSeconds <= 300) {
+                // Short intervals (30s-5m): Show time with seconds
+                return date.toLocaleTimeString('en-US', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: false
+                });
+            } else if (intervalSeconds <= 3600) {
+                // Medium intervals (30m-1h): Show time without seconds
+                return date.toLocaleTimeString('en-US', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                });
+            } else {
+                // Long intervals (2h-24h): Show date and time
+                return date.toLocaleString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                });
+            }
+        }
+
+        // Helper function to determine label interval (in 30-second steps)
+        function getLabelInterval(intervalSeconds) {
+            if (intervalSeconds <= 300) {
+                // 30s-5m: Show every 1-2 minutes (2-4 labels)
+                return 2; // Every 2 × 30s = 1 minute
+            } else if (intervalSeconds <= 1800) {
+                // 30m: Show every 5 minutes
+                return 10; // Every 10 × 30s = 5 minutes
+            } else if (intervalSeconds <= 3600) {
+                // 1h: Show every 5 minutes
+                return 10; // Every 10 × 30s = 5 minutes
+            } else if (intervalSeconds <= 7200) {
+                // 2h: Show every 15 minutes
+                return 30; // Every 30 × 30s = 15 minutes
+            } else if (intervalSeconds <= 43200) {
+                // 12h: Show every 30 minutes
+                return 60; // Every 60 × 30s = 30 minutes
+            } else {
+                // 24h: Show every hour
+                return 120; // Every 120 × 30s = 60 minutes
+            }
+        }
+
+        // Helper function to determine max ticks limit
+        function getMaxTicksLimit(intervalSeconds) {
+            if (intervalSeconds <= 300) {
+                return 10; // 30s-5m: Max 10 labels
+            } else if (intervalSeconds <= 1800) {
+                return 12; // 30m: Max 12 labels (every 5 min = 6 labels)
+            } else if (intervalSeconds <= 3600) {
+                return 15; // 1h: Max 15 labels (every 5 min = 12 labels)
+            } else if (intervalSeconds <= 7200) {
+                return 10; // 2h: Max 10 labels (every 15 min = 8 labels)
+            } else if (intervalSeconds <= 43200) {
+                return 25; // 12h: Max 25 labels (every 30 min = 24 labels)
+            } else {
+                return 25; // 24h: Max 25 labels (every hour = 24 labels)
+            }
+        }
+
+        // Generate distinct colors for each device
+        const deviceColors = [
+            'rgba(102, 126, 234, 0.8)',  // Purple
+            'rgba(245, 87, 108, 0.8)',   // Pink
+            'rgba(76, 175, 80, 0.8)',    // Green
+            'rgba(255, 193, 7, 0.8)',    // Yellow
+            'rgba(33, 150, 243, 0.8)',   // Blue
+            'rgba(255, 87, 34, 0.8)',    // Orange
+        ];
+
+
+        // Function to normalize timestamp to nearest 30-second bucket (00 or 30 seconds)
+        function normalizeTimestampTo30Sec(timestamp) {
+            const date = new Date(timestamp);
+            const seconds = date.getSeconds();
+
+            // Round to nearest 30-second interval
+            if (seconds < 15) {
+                date.setSeconds(0);
+            } else if (seconds < 45) {
+                date.setSeconds(30);
+            } else {
+                date.setSeconds(0);
+                date.setMinutes(date.getMinutes() + 1);
+            }
+            date.setMilliseconds(0);
+            return date.toISOString();
+        }
+
+        async function loadTimeseriesData(providedDevicesData = null) {
+            try {
+                // Show loading state for chart immediately
+                const chartSection = document.getElementById('chart-section');
+                if (chartSection && chartSection.style.display !== 'none') {
+                    const chartWrapper = document.querySelector('.chart-wrapper');
+                    if (chartWrapper && !chartWrapper.querySelector('.loading-chart')) {
+                        const loadingDiv = document.createElement('div');
+                        loadingDiv.className = 'loading-chart';
+                        loadingDiv.style.cssText = 'text-align: center; padding: 20px; color: #666;';
+                        loadingDiv.textContent = 'Loading chart data...';
+                        chartWrapper.appendChild(loadingDiv);
+                    }
+                }
+                
+                // Load from browser cache instead of server
+                const cachedTimeseries = loadTimeseriesFromCache();
+                
+                // Get device info if not provided
+                let devicesData = providedDevicesData;
+                if (!devicesData) {
+                    const devicesResp = await fetch('/api/devices');
+                    devicesData = await devicesResp.json();
+                }
+                
+                // Format cached data to match expected structure
+                const data = {
+                    success: true,
+                    timeseries: cachedTimeseries
+                };
+
+                // Remove loading indicator
+                const loadingDiv = document.querySelector('.loading-chart');
+                if (loadingDiv) {
+                    loadingDiv.remove();
+                }
+
+                if (!data.success) {
+                    console.error('Failed to load timeseries data:', data.error);
+                    return;
+                }
+
+                const timeseries = data.timeseries;
+
+                // Create a mapping of device UUIDs/IDs to current device names from cards
+                const deviceNameMap = {};
+
+                // Map Tapo devices (use device_id as key)
+                if (devicesData.tapo) {
+                    devicesData.tapo.forEach(device => {
+                        if (device.id) {
+                            deviceNameMap[device.id] = device.name;
+                        }
+                    });
+                }
+
+                // Map Meross devices (use uuid as key)
+                if (devicesData.meross) {
+                    devicesData.meross.forEach(device => {
+                        if (device.uuid) {
+                            deviceNameMap[device.uuid] = device.name;
+                        }
+                    });
+                }
+
+                // Map Arlec devices (use uuid as key)
+                if (devicesData.arlec) {
+                    devicesData.arlec.forEach(device => {
+                        if (device.uuid) {
+                            deviceNameMap[device.uuid] = device.name;
+                        }
+                    });
+                }
+
+                // Check if we have any data
+                if (Object.keys(timeseries).length === 0) {
+                    document.getElementById('chart-section').style.display = 'none';
+                    return;
+                }
+
+                // Show chart section
+                document.getElementById('chart-section').style.display = 'block';
+
+                // Prepare chart data
+                const deviceUuids = Object.keys(timeseries);
+                const bucketedTimestamps = new Set();
+
+                // Normalize and collect all timestamps into 30-second buckets
+                deviceUuids.forEach(uuid => {
+                    timeseries[uuid].data.forEach(point => {
+                        const normalizedTs = normalizeTimestampTo30Sec(point.timestamp);
+                        bucketedTimestamps.add(normalizedTs);
+                    });
+                });
+
+                // Sort timestamps
+                const sortedTimestamps = Array.from(bucketedTimestamps).sort();
+
+                // Calculate forecast: average of last 30 minutes per device
+                // If power drops to below 5% of previous average (last 3 periods), use that lower amount
+                // Exclude devices that have been off for 3 periods (90 seconds)
+                const forecastAverages = {};
+                const devicesToExcludeFromForecast = new Set();
+                const now = new Date();
+                const thirtyMinutesAgo = new Date(now.getTime() - 30 * 60 * 1000);
+
+                deviceUuids.forEach(uuid => {
+                    const deviceData = timeseries[uuid];
+                    
+                    // Get the last 4 data points (most recent first)
+                    const sortedData = [...deviceData.data].sort((a, b) => 
+                        new Date(b.timestamp) - new Date(a.timestamp)
+                    );
+                    const last4Points = sortedData.slice(0, 4);
+                    
+                    // If device has 3 or more data points and all last 3 are 0 (off), exclude from forecast
+                    if (last4Points.length >= 3) {
+                        const last3Points = last4Points.slice(0, 3);
+                        const allOff = last3Points.every(point => point.power === 0 || point.power === null);
+                        if (allOff) {
+                            devicesToExcludeFromForecast.add(uuid);
+                            forecastAverages[uuid] = null; // Mark as excluded
+                            return; // Skip forecast calculation for this device
+                        }
+                    }
+                    
+                    // Check if power increased: if last 4 periods average > 5% of previous average, maintain new higher average
+                    if (last4Points.length >= 4 && sortedData.length >= 8) {
+                        // Get the 4 periods before the last 4 (previous average baseline)
+                        const previous4Points = sortedData.slice(4, 8);
+                        const previousAverage = previous4Points.length > 0
+                            ? previous4Points.reduce((sum, p) => sum + (p.power || 0), 0) / previous4Points.length
+                            : 0;
+                        
+                        // Calculate average of last 4 periods (recent average)
+                        const averageOfLast4 = last4Points.reduce((sum, p) => sum + (p.power || 0), 0) / 4;
+                        
+                        // If last 4 periods average is more than 5% above the previous average, maintain the new higher average
+                        if (previousAverage > 0 && averageOfLast4 > (previousAverage * 1.05)) {
+                            // Use the average of the last 4 periods to maintain the new higher level
+                            forecastAverages[uuid] = averageOfLast4;
+                            return; // Use the new higher average for forecast, ignoring previous lower values
+                        }
+                    }
+                    
+                    // Get data points from last 30 minutes
+                    const recentData = deviceData.data.filter(point => {
+                        const pointTime = new Date(point.timestamp);
+                        return pointTime >= thirtyMinutesAgo;
+                    });
+
+                    if (recentData.length > 0) {
+                        // Simple average (no weighting)
+                        const sum = recentData.reduce((acc, point) => acc + point.power, 0);
+                        forecastAverages[uuid] = sum / recentData.length;
+                    } else {
+                        // If no recent data, use overall average
+                        const allPowers = deviceData.data.map(p => p.power).filter(p => p > 0);
+                        forecastAverages[uuid] = allPowers.length > 0 
+                            ? allPowers.reduce((a, b) => a + b, 0) / allPowers.length 
+                            : 0;
+                    }
+                });
+
+                // Generate forecast timestamps (next 30 minutes, 60 points at 30-second intervals)
+                const forecastTimestamps = [];
+                const lastTimestamp = sortedTimestamps.length > 0 
+                    ? new Date(sortedTimestamps[sortedTimestamps.length - 1])
+                    : now;
+                
+                for (let i = 1; i <= 60; i++) {
+                    const forecastTime = new Date(lastTimestamp.getTime() + i * 30 * 1000);
+                    forecastTimestamps.push(normalizeTimestampTo30Sec(forecastTime.toISOString()));
+                }
+
+                // Combine historical and forecast timestamps
+                const allTimestamps = [...sortedTimestamps, ...forecastTimestamps].sort();
+                const forecastStartIndex = sortedTimestamps.length;
+
+                // Pre-build data maps for all devices (reuse for chart and cost calculation)
+                const deviceDataMapsForChart = {};
+                deviceUuids.forEach((uuid) => {
+                    const deviceData = timeseries[uuid];
+                    const dataMap = {};
+
+                    // Create a map of normalized timestamp -> power for historical data
+                    deviceData.data.forEach(point => {
+                        const normalizedTs = normalizeTimestampTo30Sec(point.timestamp);
+                        // If multiple data points fall in the same bucket, use the latest one
+                        if (!dataMap[normalizedTs] || point.timestamp > dataMap[normalizedTs].originalTs) {
+                            dataMap[normalizedTs] = {
+                                power: point.power,
+                                originalTs: point.timestamp
+                            };
+                        }
+                    });
+                    
+                    deviceDataMapsForChart[uuid] = dataMap;
+                });
+
+                // Prepare datasets for each device (historical + forecast)
+                const datasets = [];
+                deviceUuids.forEach((uuid, index) => {
+                    const deviceData = timeseries[uuid];
+                    const dataMap = deviceDataMapsForChart[uuid];
+
+                    // Fill in data for all timestamps (historical + forecast)
+                    const fullChartData = allTimestamps.map((ts, idx) => {
+                        if (idx < forecastStartIndex) {
+                            // Historical data
+                            return dataMap[ts] ? dataMap[ts].power : 0;
+                        } else {
+                            // Forecast data - exclude if device has been off for 3 periods
+                            if (devicesToExcludeFromForecast.has(uuid)) {
+                                return null; // No forecast for devices that have been off
+                            }
+                            return forecastAverages[uuid] || 0;
+                        }
+                    });
+
+                    // Historical dataset (bars for historical period only, nulls for forecast)
+                    const historicalData = fullChartData.map((val, idx) =>
+                        idx < forecastStartIndex ? val : null
+                    );
+
+                    // Use current device name from cards (fallback to stored name if not found)
+                    const currentDeviceName = deviceNameMap[uuid] || deviceData.name;
+
+                    datasets.push({
+                        label: currentDeviceName,
+                        data: historicalData,
+                        backgroundColor: deviceColors[index % deviceColors.length],
+                        borderColor: deviceColors[index % deviceColors.length].replace('0.8', '1'),
+                        borderWidth: 1,
+                        order: 1
+                    });
+
+                    // Forecast dataset (dashed line, nulls for historical period)
+                    const forecastData = fullChartData.map((val, idx) =>
+                        idx >= forecastStartIndex ? val : null
+                    );
+                    datasets.push({
+                        type: 'line',
+                        label: currentDeviceName + ' (Forecast)',
+                        data: forecastData,
+                        backgroundColor: deviceColors[index % deviceColors.length].replace('0.8', '0.2'),
+                        borderColor: deviceColors[index % deviceColors.length].replace('0.8', '0.7'),
+                        borderWidth: 2,
+                        borderDash: [8, 4],
+                        fill: true,
+                        tension: 0,
+                        order: 2,
+                        pointRadius: 0,
+                        pointHoverRadius: 0,
+                        spanGaps: false
+                    });
+                });
+
+                // Format timestamps for display (default to 30-minute view)
+                const defaultInterval = 1800; // 30 minutes
+                const labelInterval = getLabelInterval(defaultInterval);
+                const labels = allTimestamps.map((ts, idx) => {
+                    const date = new Date(ts);
+                    const isForecast = idx >= forecastStartIndex;
+
+                    // Only show label at specified intervals
+                    // Check if this index is at a label interval boundary
+                    const shouldShowLabel = (idx % labelInterval === 0);
+
+                    if (!shouldShowLabel) {
+                        return ''; // Empty string for labels we don't want to show
+                    }
+
+                    const label = formatTimestampLabel(date, defaultInterval);
+
+                    // Mark forecast timestamps
+                    return isForecast ? label + ' (F)' : label;
+                });
+
+                // Store timestamps and labels for cost chart to use
+                powerChartTimestamps = allTimestamps;
+                powerChartLabels = labels;
+                powerChartForecastStartIndex = forecastStartIndex;
+                
+                // Store power chart data for cost calculation (reuse data maps from chart)
+                // Calculate total power at each timestamp (sum of all devices)
+                const totalPowerAtTimestamp = allTimestamps.map((ts, idx) => {
+                    let totalPower = 0;
+                    deviceUuids.forEach((uuid) => {
+                        const dataMap = deviceDataMapsForChart[uuid];
+                        
+                        // Get power value for this timestamp
+                        if (idx < forecastStartIndex) {
+                            // Historical data
+                            if (dataMap[ts]) {
+                                totalPower += dataMap[ts].power || 0;
+                            }
+                        } else {
+                            // Forecast data
+                            if (!devicesToExcludeFromForecast.has(uuid)) {
+                                totalPower += forecastAverages[uuid] || 0;
+                            }
+                        }
+                    });
+                    return totalPower;
+                });
+                
+                powerChartData = {
+                    timestamps: allTimestamps,
+                    totalPower: totalPowerAtTimestamp,
+                    forecastStartIndex: forecastStartIndex
+                };
+
+                // Create or update chart (destroy and recreate for interval changes)
+                if (powerChart) {
+                    powerChart.destroy();
+                }
+
+                // Create chart
+                {
+                    const ctx = document.getElementById('powerChart').getContext('2d');
+                    // Store labels in closure for ticks callback
+                    const chartLabels = labels;
+                    powerChart = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: labels,
+                            datasets: datasets
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            interaction: {
+                                mode: 'index',
+                                intersect: false,
+                            },
+                            plugins: {
+                                legend: {
+                                    position: 'top',
+                                    labels: {
+                                        generateLabels: function(chart) {
+                                            const original = Chart.defaults.plugins.legend.labels.generateLabels;
+                                            const labels = original.call(this, chart);
+                                            
+                                            // Separate historical and forecast labels
+                                            const historical = [];
+                                            const forecast = [];
+                                            
+                                            labels.forEach(label => {
+                                                if (label.text && label.text.includes('(Forecast)')) {
+                                                    forecast.push(label);
+                                                } else {
+                                                    historical.push(label);
+                                                }
+                                            });
+                                            
+                                            // Return historical first, then forecast
+                                            // Chart.js will wrap them naturally if we add enough spacing
+                                            const result = [...historical];
+                                            
+                                            // Add forecast items after historical
+                                            if (forecast.length > 0) {
+                                                result.push(...forecast);
+                                            }
+                                            
+                                            return result;
+                                        },
+                                        boxWidth: 12,
+                                        padding: 10
+                                    },
+                                    onClick: function(e, legendItem, legend) {
+                                        // Standard legend click behavior
+                                        const index = legendItem.datasetIndex;
+                                        if (index >= 0) {
+                                            const chart = legend.chart;
+                                            const meta = chart.getDatasetMeta(index);
+                                            meta.hidden = meta.hidden === null ? !chart.data.datasets[index].hidden : null;
+                                            chart.update();
+                                        }
+                                    }
+                                },
+                                tooltip: {
+                                    callbacks: {
+                                        label: function(context) {
+                                            let label = context.dataset.label || '';
+                                            if (label) {
+                                                label += ': ';
+                                            }
+                                            const value = context.parsed.y;
+                                            if (value === null || value === undefined) {
+                                                return label + 'N/A';
+                                            }
+                                            label += value.toFixed(1) + ' W';
+                                            return label;
+                                        },
+                                        footer: function(tooltipItems) {
+                                            let total = 0;
+                                            tooltipItems.forEach(item => {
+                                                const value = item.parsed.y;
+                                                if (value !== null && value !== undefined) {
+                                                    total += value;
+                                                }
+                                            });
+                                            return 'Total: ' + total.toFixed(1) + ' W';
+                                        }
+                                    }
+                                }
+                            },
+                            scales: {
+                                x: {
+                                    display: true,
+                                    title: {
+                                        display: true,
+                                        text: 'Time (30-second intervals) - (F) = Forecast'
+                                    },
+                                    stacked: true,
+                                    grid: {
+                                        display: true,
+                                        color: function(context) {
+                                            // Draw a vertical line at the forecast boundary
+                                            if (context.tick && context.tick.value === forecastStartIndex - 0.5) {
+                                                return 'rgba(128, 128, 128, 0.5)';
+                                            }
+                                            return 'rgba(0, 0, 0, 0.1)';
+                                        }
+                                    },
+                                    ticks: {
+                                        maxRotation: 45,
+                                        minRotation: 45,
+                                        autoSkip: true,
+                                        maxTicksLimit: getMaxTicksLimit(1800), // Default 30 minutes
+                                        callback: function(value, index, ticks) {
+                                            // Only show non-empty labels
+                                            if (index >= 0 && index < chartLabels.length) {
+                                                return chartLabels[index] || '';
+                                            }
+                                            return '';
+                                        }
+                                    }
+                                },
+                                y: {
+                                    display: true,
+                                    title: {
+                                        display: true,
+                                        text: 'Power (W)'
+                                    },
+                                    stacked: true,
+                                    beginAtZero: true,
+                                    ticks: {
+                                        callback: function(value) {
+                                            return value + ' W';
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                    
+                    // After chart is created, add class to forecast legend items for styling
+                    setTimeout(() => {
+                        const chartWrapper = document.querySelector('.chart-wrapper');
+                        if (chartWrapper) {
+                            const legendContainer = chartWrapper.querySelector('canvas').parentElement;
+                            if (legendContainer) {
+                                const legendItems = legendContainer.querySelectorAll('ul li');
+                                legendItems.forEach((item) => {
+                                    const text = item.textContent || '';
+                                    if (text.includes('(Forecast)')) {
+                                        item.classList.add('forecast-legend-item');
+                                    }
+                                });
+                            }
+                        }
+                    }, 100);
+                }
+
+            } catch (error) {
+                console.error('Error loading timeseries data:', error);
+            } finally {
+                // Load cost data and price data immediately after timeseries data is loaded
+                // Use requestAnimationFrame to ensure power chart is created first
+                requestAnimationFrame(() => {
+                    loadCostData();
+                    loadPriceData();
+                });
+            }
+        }
+
+        // Load cost data and display cost chart
+        async function loadCostData() {
+            try {
+                // Use same timestamps as power chart
+                if (!powerChartTimestamps || powerChartTimestamps.length === 0) {
+                    document.getElementById('cost-chart-section').style.display = 'none';
+                    return;
+                }
+
+                // Calculate cost from cached timeseries data
+                const defaultInterval = 1800; // 30 minutes
+                const priceResponse = await fetch(`/api/aemo/prices?interval=${defaultInterval}`);
+                
+                const priceData = await priceResponse.json();
+                
+                // Calculate costs from cached timeseries data
+                const costs = calculateCostsFromCache(powerChartData, defaultInterval);
+
+                // Check if we have any data
+                if (!costs || costs.length === 0) {
+                    document.getElementById('cost-chart-section').style.display = 'none';
+                    return;
+                }
+
+                // Show cost chart section
+                document.getElementById('cost-chart-section').style.display = 'block';
+
+                // Create a map of 5-minute interval timestamps to cost data
+                const costMap = {};
+                costs.forEach(point => {
+                    const costTime = new Date(point.timestamp);
+                    // Round to nearest 5-minute mark for key
+                    const minutes = costTime.getMinutes();
+                    const roundedMinutes = Math.floor(minutes / 5) * 5;
+                    const roundedTime = new Date(costTime);
+                    roundedTime.setMinutes(roundedMinutes, 0, 0);
+                    const key = roundedTime.toISOString();
+                    costMap[key] = point;
+                });
+
+                // Create a map of 5-minute interval timestamps to price data
+                const priceMap = {};
+                if (priceData.success && priceData.prices) {
+                    priceData.prices.forEach(point => {
+                        const priceTime = new Date(point.timestamp);
+                        // Round to nearest 5-minute mark for key
+                        const minutes = priceTime.getMinutes();
+                        const roundedMinutes = Math.floor(minutes / 5) * 5;
+                        const roundedTime = new Date(priceTime);
+                        roundedTime.setMinutes(roundedMinutes, 0, 0);
+                        const key = roundedTime.toISOString();
+                        priceMap[key] = point.price;
+                    });
+                }
+
+                // Map cost data and price data to power chart timestamps (30-second intervals)
+                // For each 30-second timestamp, find the corresponding 5-minute cost/price bucket
+                const costValues = [];
+                const priceValues = [];
+                const forecastStartIndex = powerChartForecastStartIndex;
+
+                // Calculate cost per 30-second interval based on actual power at that interval
+                // This ensures cost follows the same shape as power usage
+                const pricePerKwh = 0.15; // Constant price
+                
+                powerChartTimestamps.forEach((ts, idx) => {
+                    const timestamp = new Date(ts);
+                    const minutes = timestamp.getMinutes();
+                    const roundedMinutes = Math.floor(minutes / 5) * 5;
+                    const roundedTime = new Date(timestamp);
+                    roundedTime.setMinutes(roundedMinutes, 0, 0);
+                    const key = roundedTime.toISOString();
+
+                    if (idx < forecastStartIndex) {
+                        // Historical: calculate cost based on actual power at this 30-second interval
+                        // Get total power from power chart data
+                        const totalPower = powerChartData ? powerChartData.totalPower[idx] : 0;
+                        
+                        // Calculate energy for this 30-second interval
+                        // Energy (kWh) = Power (W) × Time (hours) / 1000
+                        // 30 seconds = 0.5 minutes = 0.5/60 hours = 0.00833 hours
+                        // Energy (kWh) = Power (W) × 0.00833 / 1000 = Power × 0.00000833 kWh
+                        const energyKwh = (totalPower * 0.5) / (60.0 * 1000);
+                        
+                        // Calculate cost for this interval
+                        const cost = energyKwh * pricePerKwh;
+                        costValues.push(cost);
+                    } else {
+                        // Forecast: will be calculated below
+                        costValues.push(null);
+                    }
+
+                    // Map price data
+                    if (priceMap[key] !== undefined) {
+                        priceValues.push(priceMap[key]);
+                    } else {
+                        priceValues.push(null);
+                    }
+                });
+
+                // For forecast period, calculate cost based on actual forecast power at each 30-second interval
+                // This ensures forecast cost follows the same shape as forecast power
+                if (forecastStartIndex < powerChartTimestamps.length && powerChartData) {
+                    for (let i = forecastStartIndex; i < powerChartTimestamps.length; i++) {
+                        // Get total power at this timestamp from power chart data
+                        const totalPower = powerChartData.totalPower[i] || 0;
+                        
+                        // Calculate energy for this 30-second interval
+                        // Energy (kWh) = Power (W) × Time (hours) / 1000
+                        // 30 seconds = 0.5 minutes = 0.5/60 hours = 0.00833 hours
+                        // Energy (kWh) = Power (W) × 0.00833 / 1000 = Power × 0.00000833 kWh
+                        const energyKwh = (totalPower * 0.5) / (60.0 * 1000);
+                        
+                        // Calculate cost for this interval
+                        const cost = energyKwh * pricePerKwh;
+                        costValues[i] = cost;
+                    }
+                }
+
+                // Create or update chart
+                if (costChart) {
+                    costChart.destroy();
+                }
+
+                // Split into historical and forecast datasets (like power chart)
+                const historicalCostData = costValues.map((val, idx) =>
+                    idx < forecastStartIndex ? val : null
+                );
+                
+                const forecastCostData = costValues.map((val, idx) =>
+                    idx >= forecastStartIndex ? val : null
+                );
+
+                // Split price data into historical and forecast
+                const historicalPriceData = priceValues.map((val, idx) =>
+                    idx < forecastStartIndex ? val : null
+                );
+                
+                const forecastPriceData = priceValues.map((val, idx) =>
+                    idx >= forecastStartIndex ? val : null
+                );
+
+                // Calculate daily total and savings
+                const now = new Date();
+                const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+                const noonStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0, 0);
+                const threePmEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 15, 0, 0, 0);
+                
+                let dailyTotal = 0;
+                let savingsAmount = 0;
+                
+                // Calculate totals from historical cost data only (not forecast)
+                powerChartTimestamps.forEach((ts, idx) => {
+                    // Only process historical data (not forecast)
+                    if (idx >= forecastStartIndex) {
+                        return;
+                    }
+                    
+                    const timestamp = new Date(ts);
+                    const cost = costValues[idx];
+                    
+                    // Skip null or undefined costs
+                    if (cost === null || cost === undefined) {
+                        return;
+                    }
+                    
+                    // Check if timestamp is today
+                    if (timestamp >= todayStart && timestamp <= now) {
+                        dailyTotal += cost;
+                        
+                        // Check if timestamp is in 12pm-3pm window
+                        if (timestamp >= noonStart && timestamp < threePmEnd) {
+                            savingsAmount += cost;
+                        }
+                    }
+                });
+                
+                // Update display elements
+                const dailyTotalElement = document.getElementById('daily-total-value');
+                const savingsElement = document.getElementById('savings-value');
+                
+                if (dailyTotalElement) {
+                    dailyTotalElement.textContent = '$' + dailyTotal.toFixed(2);
+                }
+                
+                if (savingsElement) {
+                    savingsElement.textContent = '$' + savingsAmount.toFixed(2);
+                }
+
+                const ctx = document.getElementById('costChart').getContext('2d');
+                costChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: powerChartLabels, // Use same labels as power chart
+                        datasets: [
+                            {
+                                label: 'Estimated Cost',
+                                data: historicalCostData,
+                                backgroundColor: 'rgba(76, 175, 80, 0.2)',
+                                borderColor: 'rgba(76, 175, 80, 1)',
+                                borderWidth: 2,
+                                fill: true,
+                                tension: 0.1,
+                                order: 1,
+                                yAxisID: 'y'
+                            },
+                            {
+                                label: 'Estimated Cost (Forecast)',
+                                data: forecastCostData,
+                                backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                                borderColor: 'rgba(76, 175, 80, 0.7)',
+                                borderWidth: 2,
+                                borderDash: [8, 4],
+                                fill: true,
+                                tension: 0.1,
+                                order: 2,
+                                pointRadius: 0,
+                                pointHoverRadius: 0,
+                                yAxisID: 'y'
+                            },
+                            {
+                                label: 'Market Price',
+                                data: historicalPriceData,
+                                backgroundColor: 'rgba(255, 152, 0, 0.1)',
+                                borderColor: 'rgba(255, 152, 0, 1)',
+                                borderWidth: 2,
+                                fill: false,
+                                tension: 0.1,
+                                order: 3,
+                                yAxisID: 'y1'
+                            },
+                            {
+                                label: 'Market Price (Forecast)',
+                                data: forecastPriceData,
+                                backgroundColor: 'rgba(255, 152, 0, 0.05)',
+                                borderColor: 'rgba(255, 152, 0, 0.7)',
+                                borderWidth: 2,
+                                borderDash: [8, 4],
+                                fill: false,
+                                tension: 0.1,
+                                order: 4,
+                                pointRadius: 0,
+                                pointHoverRadius: 0,
+                                yAxisID: 'y1'
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            mode: 'index',
+                            intersect: false,
+                        },
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const datasetLabel = context.dataset.label || '';
+                                        const value = context.parsed.y;
+                                        if (value === null || value === undefined) {
+                                            return datasetLabel + ': N/A';
+                                        }
+                                        
+                                        if (datasetLabel.includes('Price')) {
+                                            return datasetLabel + ': $' + value.toFixed(2) + '/kWh';
+                                        } else {
+                                            return datasetLabel + ': $' + value.toFixed(4);
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                display: true,
+                                title: {
+                                    display: true,
+                                    text: 'Time (30-second intervals) - (F) = Forecast'
+                                },
+                                grid: {
+                                    display: true,
+                                    color: function(context) {
+                                        // Draw a vertical line at the forecast boundary
+                                        if (context.tick && context.tick.value === forecastStartIndex - 0.5) {
+                                            return 'rgba(128, 128, 128, 0.5)';
+                                        }
+                                        return 'rgba(0, 0, 0, 0.1)';
+                                    }
+                                },
+                                ticks: {
+                                    maxRotation: 45,
+                                    minRotation: 45,
+                                    autoSkip: true,
+                                    maxTicksLimit: getMaxTicksLimit(1800), // Default 30 minutes
+                                    callback: function(value, index, ticks) {
+                                        // Only show non-empty labels (use same labels as power chart)
+                                        if (index >= 0 && index < powerChartLabels.length) {
+                                            return powerChartLabels[index] || '';
+                                        }
+                                        return '';
+                                    }
+                                }
+                            },
+                            y: {
+                                type: 'linear',
+                                display: true,
+                                position: 'left',
+                                title: {
+                                    display: true,
+                                    text: 'Cost ($)'
+                                },
+                                beginAtZero: true,
+                                ticks: {
+                                    callback: function(value) {
+                                        return '$' + value.toFixed(4);
+                                    }
+                                },
+                                id: 'y'
+                            },
+                            y1: {
+                                type: 'linear',
+                                display: true,
+                                position: 'right',
+                                title: {
+                                    display: true,
+                                    text: 'Price ($/kWh)'
+                                },
+                                beginAtZero: false,
+                                ticks: {
+                                    callback: function(value) {
+                                        return '$' + value.toFixed(2);
+                                    }
+                                },
+                                grid: {
+                                    drawOnChartArea: false // Only draw grid for left axis
+                                },
+                                id: 'y1'
+                            }
+                        }
+                    }
+                });
+
+            } catch (error) {
+                console.error('Error loading cost data:', error);
+                document.getElementById('cost-chart-section').style.display = 'none';
+            }
+        }
+
+        // Load power price data and display price chart
+        async function loadPriceData() {
+            try {
+                // Use same timestamps as power chart
+                if (!powerChartTimestamps || powerChartTimestamps.length === 0) {
+                    document.getElementById('price-chart-section').style.display = 'none';
+                    return;
+                }
+
+                // Fetch price data from power_price API
+                // Try to use the power_price API server (default port 5000)
+                const API_BASE_URL = 'http://localhost:5000';
+                let priceData = null;
+
+                try {
+                    const response = await fetch(`${API_BASE_URL}/api/prices/latest`);
+                    if (response.ok) {
+                        priceData = await response.json();
+                    }
+                } catch (error) {
+                    console.warn('Could not fetch from power_price API, trying fallback:', error);
+                    // Fallback: try to use the main server's price endpoint if available
+                    try {
+                        const fallbackResponse = await fetch('/api/aemo/prices');
+                        if (fallbackResponse.ok) {
+                            const fallbackData = await fallbackResponse.json();
+                            // Transform to match expected format
+                            priceData = {
+                                series: [{
+                                    name: 'dispatch',
+                                    label: 'Price (Historical)',
+                                    data: fallbackData.prices ? fallbackData.prices.map(p => ({
+                                        x: p.timestamp,
+                                        y: p.price
+                                    })) : []
+                                }]
+                            };
+                        }
+                    } catch (fallbackError) {
+                        console.error('Could not fetch price data from any source:', fallbackError);
+                    }
+                }
+
+                if (!priceData || !priceData.series || priceData.series.length === 0) {
+                    document.getElementById('price-chart-section').style.display = 'none';
+                    return;
+                }
+
+                // Build a map of 5-minute interval timestamps to prices
+                // Priority: dispatch (historical) > p5min (short forecast) > predispatch (long forecast)
+                const priceMap = new Map();
+                const forecastStartIndex = powerChartForecastStartIndex;
+
+                // Process each series type in priority order
+                const seriesPriority = ['dispatch', 'p5min', 'predispatch'];
+                seriesPriority.forEach(seriesName => {
+                    const series = priceData.series.find(s => s.name === seriesName);
+                    if (series && series.data) {
+                        series.data.forEach(point => {
+                            if (point.x && point.y !== null && point.y !== undefined) {
+                                // Round timestamp to nearest 5-minute mark
+                                const timestamp = new Date(point.x);
+                                const minutes = timestamp.getMinutes();
+                                const roundedMinutes = Math.floor(minutes / 5) * 5;
+                                const roundedTime = new Date(timestamp);
+                                roundedTime.setMinutes(roundedMinutes, 0, 0);
+                                const key = roundedTime.toISOString();
+
+                                // Only add if not already set (priority: dispatch > p5min > predispatch)
+                                if (!priceMap.has(key)) {
+                                    priceMap.set(key, {
+                                        price: point.y,
+                                        source: seriesName,
+                                        timestamp: roundedTime
+                                    });
+                                }
+                            }
+                        });
+                    }
+                });
+
+                // Map prices to 30-second timestamps (create flat lines for each 5-minute interval)
+                const historicalPriceData = [];
+                const forecastPriceData = [];
+                
+                // Track the current 5-minute interval to create flat lines
+                let currentIntervalKey = null;
+                let currentIntervalPrice = null;
+
+                powerChartTimestamps.forEach((ts, idx) => {
+                    const timestamp = new Date(ts);
+                    const minutes = timestamp.getMinutes();
+                    const roundedMinutes = Math.floor(minutes / 5) * 5;
+                    const roundedTime = new Date(timestamp);
+                    roundedTime.setMinutes(roundedMinutes, 0, 0);
+                    const key = roundedTime.toISOString();
+
+                    // Check if we're in a new 5-minute interval
+                    if (key !== currentIntervalKey) {
+                        // New interval - get price for this interval
+                        const priceEntry = priceMap.get(key);
+                        currentIntervalPrice = priceEntry ? priceEntry.price : null;
+                        currentIntervalKey = key;
+                    }
+
+                    // Determine if this is historical or forecast
+                    const isForecast = idx >= forecastStartIndex;
+
+                    // Use the current interval price (flat line for all 30-second points in this 5-minute interval)
+                    if (currentIntervalPrice !== null) {
+                        if (isForecast) {
+                            forecastPriceData.push(currentIntervalPrice);
+                            historicalPriceData.push(null);
+                        } else {
+                            historicalPriceData.push(currentIntervalPrice);
+                            forecastPriceData.push(null);
+                        }
+                    } else {
+                        // No price data for this interval
+                        historicalPriceData.push(null);
+                        forecastPriceData.push(null);
+                    }
+                });
+
+                // Show chart section
+                document.getElementById('price-chart-section').style.display = 'block';
+
+                // Destroy existing chart if it exists
+                if (priceChart) {
+                    priceChart.destroy();
+                }
+
+                // Create price chart
+                const ctx = document.getElementById('priceChart').getContext('2d');
+                priceChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: powerChartLabels,
+                        datasets: [
+                            {
+                                label: 'Price (Historical)',
+                                data: historicalPriceData,
+                                backgroundColor: 'rgba(46, 134, 171, 0.2)',
+                                borderColor: 'rgba(46, 134, 171, 1)',
+                                borderWidth: 2,
+                                fill: false,
+                                tension: 0, // Use straight lines (step function)
+                                stepped: 'before', // Create flat lines
+                                order: 1,
+                                pointRadius: 0,
+                                pointHoverRadius: 4
+                            },
+                            {
+                                label: 'Price (Forecast)',
+                                data: forecastPriceData,
+                                backgroundColor: 'rgba(241, 143, 1, 0.2)',
+                                borderColor: 'rgba(241, 143, 1, 0.7)',
+                                borderWidth: 2,
+                                borderDash: [8, 4],
+                                fill: false,
+                                tension: 0, // Use straight lines (step function)
+                                stepped: 'before', // Create flat lines
+                                order: 2,
+                                pointRadius: 0,
+                                pointHoverRadius: 4
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            mode: 'index',
+                            intersect: false,
+                        },
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                            },
+                            tooltip: {
+                                mode: 'index',
+                                intersect: false,
+                                callbacks: {
+                                    label: function(context) {
+                                        const value = context.parsed.y;
+                                        if (value === null) return '';
+                                        return `${context.dataset.label}: $${value.toFixed(2)} AUD/MWh`;
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                ticks: {
+                                    maxRotation: 45,
+                                    minRotation: 45
+                                }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: 'Price (AUD/MWh)'
+                                },
+                                beginAtZero: false,
+                                ticks: {
+                                    callback: function(value) {
+                                        return '$' + value.toFixed(2);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+
+            } catch (error) {
+                console.error('Error loading price data:', error);
+                document.getElementById('price-chart-section').style.display = 'none';
+            }
+        }
+
+        // Function to collect timeseries data from card values and store in browser cache
+        async function collectTimeseriesFromCards() {
+            if (!currentDevicesData || currentDevicesData.length === 0) {
+                return;
+            }
+            
+            try {
+                const timestamp = new Date().toISOString();
+                let devicesAdded = 0;
+                
+                // Extract power data from current device cards and store in cache
+                currentDevicesData.forEach(device => {
+                    const deviceId = device.id || device.uuid;
+                    if (!deviceId) return;
+                    
+                    const power = device.power !== undefined ? device.power : (device.online && device.status === 'on' ? 0 : null);
+                    
+                    if (power !== null && power !== undefined) {
+                        addToTimeseriesCache(deviceId, device.name, round(power, 2), timestamp);
+                        devicesAdded++;
+                    }
+                });
+                
+                if (devicesAdded > 0) {
+                    console.log(`[Timeseries] Cached data for ${devicesAdded} device(s) at ${timestamp}`);
+                    // Reload chart with new data
+                    loadTimeseriesData();
+                }
+            } catch (error) {
+                console.error('Error collecting timeseries data:', error);
+            }
+        }
+        
+        // Helper function to round numbers
+        function round(value, decimals) {
+            return Math.round(value * Math.pow(10, decimals)) / Math.pow(10, decimals);
+        }
+        
+        // Calculate costs from cached timeseries data
+        function calculateCostsFromCache(powerChartData, intervalSeconds) {
+            if (!powerChartData || !powerChartData.timestamps || !powerChartData.totalPower) {
+                return [];
+            }
+            
+            const costs = [];
+            const pricePerKwh = 0.15; // Constant price
+            const forecastStartIndex = powerChartData.forecastStartIndex || powerChartData.timestamps.length;
+            
+            powerChartData.timestamps.forEach((ts, idx) => {
+                const totalPower = powerChartData.totalPower[idx] || 0;
+                
+                // Calculate energy for this 30-second interval
+                // Energy (kWh) = Power (W) × Time (hours) / 1000
+                // 30 seconds = 0.5 minutes = 0.5/60 hours
+                const energyKwh = (totalPower * 0.5) / (60.0 * 1000);
+                
+                // Calculate cost for this interval
+                const cost = energyKwh * pricePerKwh;
+                
+                // Round to nearest 5-minute mark for aggregation
+                const timestamp = new Date(ts);
+                const minutes = timestamp.getMinutes();
+                const roundedMinutes = Math.floor(minutes / 5) * 5;
+                const roundedTime = new Date(timestamp);
+                roundedTime.setMinutes(roundedMinutes, 0, 0);
+                
+                costs.push({
+                    timestamp: roundedTime.toISOString(),
+                    energy_kwh: round(energyKwh, 4),
+                    price: pricePerKwh,
+                    cost: round(cost, 4)
+                });
+            });
+            
+            // Aggregate to 5-minute intervals
+            const aggregatedCosts = {};
+            costs.forEach(point => {
+                const key = point.timestamp;
+                if (!aggregatedCosts[key]) {
+                    aggregatedCosts[key] = {
+                        timestamp: key,
+                        energy_kwh: 0,
+                        price: point.price,
+                        cost: 0
+                    };
+                }
+                aggregatedCosts[key].energy_kwh += point.energy_kwh;
+                aggregatedCosts[key].cost += point.cost;
+            });
+            
+            // Convert to array and sort
+            return Object.values(aggregatedCosts)
+                .map(item => ({
+                    timestamp: item.timestamp,
+                    energy_kwh: round(item.energy_kwh, 4),
+                    price: item.price,
+                    cost: round(item.cost, 4)
+                }))
+                .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        }
+
+        // Function to calculate milliseconds until next 30-second mark (:00 or :30)
+        function getMsUntilNext30Second() {
+            const now = new Date();
+            const seconds = now.getSeconds();
+            const milliseconds = now.getMilliseconds();
+            
+            // Calculate seconds until next 30-second mark
+            let secondsUntilNext;
+            if (seconds < 30) {
+                secondsUntilNext = 30 - seconds;
+            } else {
+                secondsUntilNext = 60 - seconds;
+            }
+            
+            // Convert to milliseconds and subtract current milliseconds
+            return (secondsUntilNext * 1000) - milliseconds;
+        }
+
+        // Start timeseries collection synchronized to clock (:00 and :30 seconds)
+        function startTimeseriesCollection() {
+            // Clear any existing interval
+            if (timeseriesCollectionInterval) {
+                clearInterval(timeseriesCollectionInterval);
+            }
+            
+            // Calculate time until next 30-second mark
+            const msUntilNext = getMsUntilNext30Second();
+            
+            // Wait until the next 30-second mark, then start collecting every 30 seconds
+            setTimeout(() => {
+                // Collect immediately
+                collectTimeseriesFromCards();
+                
+                // Then collect every 30 seconds
+                timeseriesCollectionInterval = setInterval(() => {
+                    collectTimeseriesFromCards();
+                }, 30000);
+            }, msUntilNext);
+        }
+
+        // Load devices on page load
+        window.addEventListener('load', async () => {
+            // Show loading screen on initial load
+            // Load devices first, then pass the data to timeseries to avoid duplicate fetch
+            const devicesResponse = await fetch('/api/devices');
+            const devicesData = await devicesResponse.json();
+            
+            if (devicesData.success) {
+                // Combine all devices and render
+                const allDevices = [];
+                
+                (devicesData.tapo || []).forEach(device => {
+                    allDevices.push({...device, deviceType: 'tapo'});
+                });
+                
+                (devicesData.meross || []).forEach(device => {
+                    allDevices.push({...device, deviceType: 'meross'});
+                });
+                
+                (devicesData.arlec || []).forEach(device => {
+                    allDevices.push({...device, deviceType: 'arlec'});
+                });
+                
+                // Store device data for timeseries collection
+                currentDevicesData = allDevices;
+                
+                // Render all devices
+                renderAllDevices(allDevices);
+                
+                // Hide loading, show content
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('content').style.display = 'block';
+                updateLastUpdated();
+                
+                // Load timeseries from browser cache with the device data we already have
+                loadTimeseriesData(devicesData);
+            } else {
+                // Error handling
+                document.getElementById('error-container').innerHTML = 
+                    `<div class="error">Error: ${devicesData.error || 'Failed to load devices'}</div>`;
+                document.getElementById('loading').style.display = 'none';
+            }
+
+            // Start timeseries collection from card values (synchronized to clock)
+            startTimeseriesCollection();
+
+            // Auto-refresh every 30 seconds (smooth updates, no loading screen)
+            autoRefreshInterval = setInterval(() => {
+                loadDevices(false);
+            }, 30000);
+        });
+
+        // Export timeseries data to CSV
+        async function exportTimeseriesToCSV() {
+            try {
+                // Load from browser cache
+                const timeseries = loadTimeseriesFromCache();
+
+                if (!timeseries || Object.keys(timeseries).length === 0) {
+                    alert('No timeseries data available to export');
+                    return;
+                }
+
+                // Prepare CSV data
+                // Format: Timestamp, Device Name, Power (W)
+                let csvContent = 'Timestamp,Device Name,Power (W)\n';
+
+                // Collect all data points with device names
+                const allDataPoints = [];
+                for (const [uuid, deviceData] of Object.entries(timeseries)) {
+                    const deviceName = deviceData.name || 'Unknown Device';
+                    deviceData.data.forEach(point => {
+                        allDataPoints.push({
+                            timestamp: point.timestamp,
+                            deviceName: deviceName,
+                            power: point.power !== null && point.power !== undefined ? point.power : 0
+                        });
+                    });
+                }
+
+                // Sort by timestamp
+                allDataPoints.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                // Add rows to CSV
+                allDataPoints.forEach(point => {
+                    // Format timestamp for CSV (ISO format is fine, but we can make it more readable)
+                    const date = new Date(point.timestamp);
+                    const formattedTimestamp = date.toISOString().replace('T', ' ').substring(0, 19);
+                    // Escape device name if it contains commas or quotes
+                    const escapedName = point.deviceName.includes(',') || point.deviceName.includes('"')
+                        ? `"${point.deviceName.replace(/"/g, '""')}"`
+                        : point.deviceName;
+                    csvContent += `${formattedTimestamp},${escapedName},${point.power}\n`;
+                });
+
+                // Create blob and download
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement('a');
+                const url = URL.createObjectURL(blob);
+                
+                // Generate filename with current date/time
+                const now = new Date();
+                const filename = `timeseries_export_${now.toISOString().replace(/[:.]/g, '-').substring(0, 19)}.csv`;
+                
+                link.setAttribute('href', url);
+                link.setAttribute('download', filename);
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            } catch (error) {
+                console.error('Error exporting to CSV:', error);
+                alert('Error exporting data to CSV: ' + error.message);
+            }
+        }
+
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+            }
+            if (timeseriesCollectionInterval) {
+                clearInterval(timeseriesCollectionInterval);
+            }
+        });
+    </script>
+</body>
+</html>

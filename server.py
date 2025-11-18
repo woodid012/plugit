@@ -1,0 +1,1119 @@
+"""
+Smart Home Control Server
+Flask backend for controlling Tapo, Meross, Arlec, and Matter devices
+"""
+
+from flask import Flask, jsonify, request, send_from_directory
+from flask_cors import CORS
+import asyncio
+from threading import Thread
+from concurrent.futures import Future, ThreadPoolExecutor
+import os
+import json
+from datetime import datetime, timedelta
+
+# Import credentials
+from IoS_logins import (
+    TAPO_EMAIL, TAPO_PASSWORD, 
+    MEROSS_EMAIL, MEROSS_PASSWORD, 
+    TUYA_ACCESS_ID, TUYA_ACCESS_SECRET, TUYA_API_REGION,
+    KNOWN_DEVICES, MATTER_DEVICES, get_all_matter_devices
+)
+
+# Import device libraries
+from tapo import ApiClient
+from meross_iot.http_api import MerossHttpClient
+from meross_iot.manager import MerossManager
+import tinytuya
+
+# Import Matter controller
+try:
+    from Matter.matter_controller import MatterController
+    MATTER_AVAILABLE = True
+except ImportError:
+    MATTER_AVAILABLE = False
+    print("[WARNING] Matter controller not available. Install Matter dependencies.")
+
+app = Flask(__name__)
+CORS(app)
+
+# Global variables for Meross
+meross_manager = None
+meross_http_client = None
+meross_devices = []
+meross_loop = None
+meross_loop_thread = None
+
+# Global variables for Arlec (Tuya Cloud)
+arlec_cloud = None
+arlec_devices = []
+arlec_devices_list = []  # List of Arlec device IDs for timeseries collection
+
+# Global variables for Matter devices
+matter_devices_list = []  # List of {device_id, ip, name, port} for timeseries collection
+
+# Global variables for Tapo devices (for timeseries collection)
+tapo_devices_list = []  # List of {device_id, ip, email, password, name}
+
+# Dynamic Tapo device storage (device_id -> {ip, email, password})
+# This allows adding devices without modifying IoS_logins.py
+tapo_devices_storage = {}
+TAPO_DEVICES_FILE = 'tapo_devices.json'
+
+# Timeseries data is now stored in browser localStorage (client-side only)
+
+# Windows event loop policy
+if hasattr(asyncio, 'WindowsSelectorEventLoopPolicy'):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+
+def run_in_meross_loop(coro):
+    """Run a coroutine in the Meross event loop thread"""
+    global meross_loop
+    if meross_loop is None:
+        raise RuntimeError("Meross loop not initialized")
+
+    future = asyncio.run_coroutine_threadsafe(coro, meross_loop)
+    return future.result(timeout=30)  # 30 second timeout
+
+
+def load_tapo_devices():
+    """Load dynamically added Tapo devices from file"""
+    global tapo_devices_storage
+    
+    if not os.path.exists(TAPO_DEVICES_FILE):
+        return
+    
+    try:
+        with open(TAPO_DEVICES_FILE, 'r') as f:
+            tapo_devices_storage = json.load(f)
+        
+        if tapo_devices_storage:
+            print(f"[OK] Loaded {len(tapo_devices_storage)} dynamically added Tapo device(s) from {TAPO_DEVICES_FILE}")
+    except Exception as e:
+        print(f"[ERROR] Failed to load Tapo devices: {e}")
+        tapo_devices_storage = {}
+
+
+def save_tapo_devices():
+    """Save dynamically added Tapo devices to file"""
+    global tapo_devices_storage
+    
+    try:
+        with open(TAPO_DEVICES_FILE, 'w') as f:
+            json.dump(tapo_devices_storage, f, indent=2)
+    except Exception as e:
+        print(f"[ERROR] Failed to save Tapo devices: {e}")
+
+
+def init_arlec():
+    """Initialize Arlec (Tuya Cloud) connection"""
+    global arlec_cloud, arlec_devices
+
+    try:
+        arlec_cloud = tinytuya.Cloud(
+            apiRegion=TUYA_API_REGION,
+            apiKey=TUYA_ACCESS_ID,
+            apiSecret=TUYA_ACCESS_SECRET
+        )
+
+        # Discover devices
+        arlec_devices = arlec_cloud.getdevices()
+        
+        if arlec_devices:
+            print(f"[OK] Arlec: Found {len(arlec_devices)} device(s)")
+        else:
+            print("[WARNING] Arlec: No devices found")
+            arlec_devices = []
+    except Exception as e:
+        print(f"[ERROR] Arlec initialization error: {e}")
+        arlec_devices = []
+
+
+async def init_meross():
+    """Initialize Meross connection"""
+    global meross_manager, meross_http_client, meross_devices
+
+    try:
+        # Use AP (Asia-Pacific) server to avoid redirect
+        meross_http_client = await MerossHttpClient.async_from_user_password(
+            api_base_url="https://iotx-ap.meross.com",
+            email=MEROSS_EMAIL,
+            password=MEROSS_PASSWORD
+        )
+
+        meross_manager = MerossManager(http_client=meross_http_client)
+        await meross_manager.async_init()
+        await meross_manager.async_device_discovery()
+        meross_devices = meross_manager.find_devices()
+
+        print(f"[OK] Meross: Found {len(meross_devices)} devices")
+    except Exception as e:
+        print(f"[ERROR] Meross initialization error: {e}")
+
+
+async def get_tapo_device(ip, email=None, password=None):
+    """Get a Tapo device connection - supports P100, P110, and other models"""
+    try:
+        # Use provided credentials or fall back to defaults
+        tapo_email = email or TAPO_EMAIL
+        tapo_password = password or TAPO_PASSWORD
+        client = ApiClient(tapo_email, tapo_password)
+        
+        # Try P110 first (newer model), then fall back to P100
+        # The p100() method often works for P110 too, but try p110 if available
+        # Reduced timeout from 3.0s to 1.5s for faster loading
+        try:
+            if hasattr(client, 'p110'):
+                device = await asyncio.wait_for(client.p110(ip), timeout=1.5)
+            else:
+                # Fall back to p100 (works for most Tapo smart plugs)
+                device = await asyncio.wait_for(client.p100(ip), timeout=1.5)
+        except AttributeError:
+            # If p110 doesn't exist, use p100
+            device = await asyncio.wait_for(client.p100(ip), timeout=1.5)
+        
+        return device
+    except asyncio.TimeoutError:
+        return None  # Timeout - device unreachable, fail silently for speed
+    except Exception as e:
+        return None  # Connection error - fail silently for speed
+
+
+async def get_tapo_status(ip, email=None, password=None, device_name=None):
+    """Get Tapo device status"""
+    try:
+        device = await get_tapo_device(ip, email, password)
+        if device:
+            info = await device.get_device_info()
+            # Use provided name or extract from device nickname/model
+            name = device_name or 'Smart Plug'
+            if hasattr(info, 'nickname') and info.nickname:
+                name = info.nickname
+            elif device_name:
+                # Convert device_id to readable name (e.g., "tapo_wine_fridge_monitor" -> "Wine Fridge")
+                name = device_name.replace('tapo_', '').replace('_', ' ').title()
+                # Remove "Monitor" suffix if present for cleaner display
+                if name.endswith(' Monitor'):
+                    name = name[:-8]
+            
+            # Use model from device info to auto-populate type
+            # Format: "P110" or "P100" etc. (without "Tapo" prefix)
+            device_type = info.model if info.model else 'Smart Plug'
+            
+            device_status = {
+                'name': name,
+                'type': device_type,
+                'ip': ip,
+                'status': 'on' if info.device_on else 'off',
+                'online': True,
+                'model': info.model,
+                'rssi': info.rssi
+            }
+            
+            # Try to get current power data (power monitoring) - with timeout for faster loading
+            try:
+                # Use asyncio.wait_for to timeout power call (don't block on slow devices)
+                current_power = await asyncio.wait_for(device.get_current_power(), timeout=2.0)
+                if current_power and hasattr(current_power, 'current_power'):
+                    power_watts = current_power.current_power
+                    if power_watts is not None:
+                        # Convert to float and ensure it's a number
+                        power_watts = float(power_watts)
+                        device_status['power'] = round(power_watts, 2)
+
+                        # Calculate current (Amps) assuming 240V (Australian standard)
+                        # Power (W) = Voltage (V) × Current (A)
+                        # Current (A) = Power (W) / Voltage (V)
+                        voltage = 240.0  # Standard voltage in Australia
+                        current_amps = power_watts / voltage
+                        device_status['current'] = round(current_amps, 2)
+                        device_status['voltage'] = round(voltage, 1)
+            except asyncio.TimeoutError:
+                # Power call timed out - skip it for faster loading, device still works
+                pass
+            except Exception as e:
+                # Energy monitoring not available or failed - device still works
+                pass  # Silently skip on initial load for speed
+            
+            return device_status
+    except Exception as e:
+        print(f"Error getting Tapo status for {ip}: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # Return offline device with proper name
+    name = device_name or 'Smart Plug'
+    if device_name and not name.startswith('Smart'):
+        # Convert device_id to readable name
+        name = device_name.replace('tapo_', '').replace('_', ' ').title()
+        # Remove "Monitor" suffix if present for cleaner display
+        if name.endswith(' Monitor'):
+            name = name[:-8]
+    
+    return {
+        'name': name,
+        'type': 'Smart Plug',  # Default when offline (model unknown)
+        'ip': ip,
+        'status': 'unknown',
+        'online': False
+    }
+
+
+async def control_tapo(ip, action, email=None, password=None):
+    """Control a Tapo device"""
+    try:
+        device = await get_tapo_device(ip, email, password)
+        if not device:
+            return {'success': False, 'error': 'Could not connect to device'}
+
+        if action == 'on':
+            await device.on()
+        elif action == 'off':
+            await device.off()
+        else:
+            return {'success': False, 'error': 'Invalid action'}
+
+        return {'success': True, 'action': action}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+async def get_meross_status_async():
+    """Get all Meross devices status (async)"""
+    global meross_devices
+
+    devices_status = []
+
+    try:
+        for device in meross_devices:
+            try:
+                # Update device status
+                await device.async_update()
+
+                # Build device status - access state right after update in same async context
+                device_info = {
+                    'name': device.name,
+                    'type': device.type,
+                    'uuid': device.uuid,
+                    'status': 'on' if device.is_on() else 'off',
+                    'online': device.online_status.name == 'ONLINE'
+                }
+
+                # Try to get energy monitoring data if available
+                try:
+                    # MSS310 devices use async_get_instant_metrics()
+                    if hasattr(device, 'async_get_instant_metrics'):
+                        metrics = await device.async_get_instant_metrics()
+                        # metrics is an InstantElectricityMeasurement object
+                        if metrics:
+                            device_info['power'] = metrics.power  # Already in Watts
+                            device_info['current'] = metrics.current  # Already in Amps
+                            device_info['voltage'] = metrics.voltage  # Already in Volts
+                except Exception as e:
+                    print(f"Could not get electricity data for {device.name}: {e}")
+
+                devices_status.append(device_info)
+            except Exception as e:
+                print(f"Error updating device {device.name}: {e}")
+                # Add device with unknown status
+                devices_status.append({
+                    'name': device.name,
+                    'type': device.type,
+                    'uuid': device.uuid,
+                    'status': 'unknown',
+                    'online': False
+                })
+    except Exception as e:
+        print(f"Error getting Meross status: {e}")
+
+    return devices_status
+
+
+def get_arlec_status():
+    """Get all Arlec devices status - matches Meross format"""
+    global arlec_devices, arlec_cloud
+    
+    devices_status = []
+    
+    if not arlec_cloud or not arlec_devices:
+        return devices_status
+    
+    try:
+        for device in arlec_devices:
+            try:
+                device_id = device.get('id')
+                if not device_id:
+                    continue
+                
+                # Get device status
+                status = arlec_cloud.getstatus(device_id)
+                
+                # Extract switch state and energy data
+                switch_state = False
+                power = None
+                voltage = None
+                current = None
+                
+                if status and 'result' in status:
+                    for item in status['result']:
+                        code = item.get('code', '')
+                        value = item.get('value')
+                        
+                        if code == 'switch_1':
+                            switch_state = bool(value) if value is not None else False
+                        elif code == 'cur_power':
+                            # Power: value is in 0.1W units, convert to W
+                            if value is not None:
+                                power = float(value) / 10.0
+                        elif code == 'cur_voltage':
+                            # Voltage: value is in 0.1V units, convert to V
+                            if value is not None:
+                                voltage = float(value) / 10.0
+                        elif code == 'cur_current':
+                            # Current: value is in mA, convert to A
+                            if value is not None:
+                                current = float(value) / 1000.0
+                
+                # Determine online status - device is online if we can get status
+                is_online = status is not None and status.get('success', False)
+                if not is_online:
+                    # Fall back to device online field
+                    is_online = device.get('online', False) is True
+                
+                # Build device info matching Meross format
+                device_info = {
+                    'name': device.get('name', 'Arlec Device'),
+                    'type': device.get('product_name', 'Arlec Smart Plug'),
+                    'uuid': device_id,  # Use 'uuid' to match Meross format
+                    'status': 'on' if switch_state else 'off',
+                    'online': is_online
+                }
+                
+                # Add energy data if available (same format as Meross)
+                if power is not None:
+                    device_info['power'] = round(power, 2)
+                if voltage is not None:
+                    device_info['voltage'] = round(voltage, 1)
+                if current is not None:
+                    device_info['current'] = round(current, 2)
+                
+                devices_status.append(device_info)
+            except Exception as e:
+                print(f"Error getting Arlec device status {device.get('name', 'unknown')}: {e}")
+                import traceback
+                traceback.print_exc()
+                # Add device with unknown status (matching Meross format)
+                devices_status.append({
+                    'name': device.get('name', 'Arlec Device'),
+                    'type': device.get('product_name', 'Arlec Smart Plug'),
+                    'uuid': device.get('id', 'unknown'),
+                    'status': 'unknown',
+                    'online': False
+                })
+    except Exception as e:
+        print(f"Error getting Arlec status: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    return devices_status
+
+
+def control_arlec(device_id, action):
+    """Control an Arlec device"""
+    global arlec_cloud
+    
+    if not arlec_cloud:
+        return {'success': False, 'error': 'Arlec cloud not initialized'}
+    
+    try:
+        if action == 'on':
+            result = arlec_cloud.sendcommand(
+                device_id,
+                {'commands': [{'code': 'switch_1', 'value': True}]}
+            )
+        elif action == 'off':
+            result = arlec_cloud.sendcommand(
+                device_id,
+                {'commands': [{'code': 'switch_1', 'value': False}]}
+            )
+        elif action == 'toggle':
+            # Get current status first
+            status = arlec_cloud.getstatus(device_id)
+            current_state = False
+            
+            if status and 'result' in status:
+                for item in status['result']:
+                    if item.get('code') == 'switch_1':
+                        current_state = bool(item.get('value', False))
+                        break
+            
+            # Toggle
+            new_value = not current_state
+            result = arlec_cloud.sendcommand(
+                device_id,
+                {'commands': [{'code': 'switch_1', 'value': new_value}]}
+            )
+        else:
+            return {'success': False, 'error': 'Invalid action'}
+        
+        if result.get('success', False):
+            return {
+                'success': True,
+                'action': action
+            }
+        else:
+            return {'success': False, 'error': str(result)}
+    except Exception as e:
+        print(f"Error controlling Arlec device: {e}")
+        return {'success': False, 'error': str(e)}
+
+
+async def get_matter_status(device_id, ip=None, port=5540, device_name=None):
+    """Get Matter device status"""
+    if not MATTER_AVAILABLE:
+        return {
+            'name': device_name or 'Matter Device',
+            'type': 'Smart Plug',
+            'status': 'unknown',
+            'online': False,
+            'error': 'Matter library not available'
+        }
+    
+    try:
+        controller = MatterController(device_id, ip, port)
+        
+        # Try to connect and get status
+        status = await controller.get_status()
+        
+        if status.get('online'):
+            # Get device info
+            info = await controller.get_info()
+            
+            # Try to get energy data
+            energy_data = await controller.get_energy_usage()
+            
+            device_status = {
+                'name': device_name or 'Matter Device',
+                'type': 'Smart Plug',
+                'status': status.get('status', 'unknown'),
+                'online': True,
+                'uuid': device_id,  # Use device_id as UUID for consistency
+                'id': device_id
+            }
+            
+            # Add energy data if available
+            if energy_data:
+                if energy_data.get('power') is not None:
+                    device_status['power'] = round(energy_data['power'], 2)
+                if energy_data.get('voltage') is not None:
+                    device_status['voltage'] = round(energy_data['voltage'], 1)
+                if energy_data.get('current') is not None:
+                    device_status['current'] = round(energy_data['current'], 2)
+            
+            # Add device info if available
+            if info:
+                if hasattr(info, 'product_name'):
+                    device_status['type'] = info.product_name
+                if hasattr(info, 'vendor_name'):
+                    device_status['vendor'] = info.vendor_name
+            
+            controller.disconnect()
+            return device_status
+        else:
+            controller.disconnect()
+            return {
+                'name': device_name or 'Matter Device',
+                'type': 'Smart Plug',
+                'status': 'unknown',
+                'online': False,
+                'uuid': device_id,
+                'id': device_id
+            }
+            
+    except Exception as e:
+        print(f"Error getting Matter status for {device_id}: {e}")
+        return {
+            'name': device_name or 'Matter Device',
+            'type': 'Smart Plug',
+            'status': 'unknown',
+            'online': False,
+            'uuid': device_id,
+            'id': device_id,
+            'error': str(e)
+        }
+
+
+async def control_matter(device_id, action, ip=None, port=5540):
+    """Control a Matter device"""
+    if not MATTER_AVAILABLE:
+        return {'success': False, 'error': 'Matter library not available'}
+    
+    try:
+        controller = MatterController(device_id, ip, port)
+        
+        if not await controller.connect():
+            return {'success': False, 'error': 'Could not connect to device'}
+        
+        if action == 'on':
+            result = await controller.turn_on()
+        elif action == 'off':
+            result = await controller.turn_off()
+        elif action == 'toggle':
+            # Get current status first
+            status = await controller.get_status()
+            current_state = status.get('status') == 'on'
+            
+            if current_state:
+                result = await controller.turn_off()
+            else:
+                result = await controller.turn_on()
+        else:
+            controller.disconnect()
+            return {'success': False, 'error': 'Invalid action'}
+        
+        controller.disconnect()
+        
+        if result:
+            return {'success': True, 'action': action}
+        else:
+            return {'success': False, 'error': 'Command failed'}
+            
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+async def control_meross_async(uuid, action):
+    """Control a Meross device (async)"""
+    global meross_devices
+
+    try:
+        device = None
+        for d in meross_devices:
+            if d.uuid == uuid:
+                device = d
+                break
+
+        if not device:
+            return {'success': False, 'error': 'Device not found'}
+
+        # Update device first to get current state
+        await device.async_update()
+
+        # Execute control action
+        if action == 'on':
+            await device.async_turn_on()
+        elif action == 'off':
+            await device.async_turn_off()
+        elif action == 'toggle':
+            current_state = device.is_on()
+            if current_state:
+                await device.async_turn_off()
+            else:
+                await device.async_turn_on()
+        else:
+            return {'success': False, 'error': 'Invalid action'}
+
+        # Wait a moment for the command to take effect
+        await asyncio.sleep(0.5)
+
+        # Update again to get new state
+        await device.async_update()
+
+        return {
+            'success': True,
+            'action': action,
+            'new_status': 'on' if device.is_on() else 'off'
+        }
+    except Exception as e:
+        print(f"Error controlling Meross device: {e}")
+        return {'success': False, 'error': str(e)}
+
+
+# Routes
+
+@app.route('/')
+def index():
+    """Serve the main HTML page"""
+    return send_from_directory('.', 'index.html')
+
+
+@app.route('/api/debug/tapo', methods=['GET'])
+def debug_tapo_devices():
+    """Debug endpoint to see what Tapo devices are configured"""
+    tapo_config = {}
+    for name, ip in KNOWN_DEVICES.items():
+        if 'tapo' in name.lower():
+            tapo_config[name] = ip
+    
+    return jsonify({
+        'success': True,
+        'known_devices': tapo_config,
+        'dynamic_devices': tapo_devices_storage,
+        'total_known': len(tapo_config),
+        'total_dynamic': len(tapo_devices_storage)
+    })
+
+
+@app.route('/api/devices', methods=['GET'])
+def get_devices():
+    """Get all devices status - optimized with parallel loading"""
+    try:
+        # Prepare Tapo device loading function
+        def load_tapo_devices():
+            """Load all Tapo devices in parallel"""
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            try:
+                global tapo_devices_list
+                tapo_devices = []
+                tapo_devices_list = []  # Reset list for timeseries collection
+                
+                # Collect all Tapo devices to load in parallel
+                tapo_tasks = []
+                
+                # Get devices from KNOWN_DEVICES (legacy)
+                for name, ip in KNOWN_DEVICES.items():
+                    if 'tapo' in name.lower():
+                        tapo_devices_list.append({
+                            'device_id': name,
+                            'ip': ip,
+                            'email': None,
+                            'password': None,
+                            'name': name.replace('tapo_', '').replace('_', ' ').title()
+                        })
+                        tapo_tasks.append((name, ip, None, None, name))
+                
+                # Get devices from dynamic storage
+                for device_id, device_info in tapo_devices_storage.items():
+                    ip = device_info.get('ip')
+                    email = device_info.get('email')
+                    password = device_info.get('password')
+                    device_name = device_info.get('name', device_id)
+                    
+                    tapo_devices_list.append({
+                        'device_id': device_id,
+                        'ip': ip,
+                        'email': email,
+                        'password': password,
+                        'name': device_name
+                    })
+                    tapo_tasks.append((device_id, ip, email, password, device_name))
+                
+                # Load all Tapo devices in parallel
+                async def load_all_tapo_devices():
+                    tasks = []
+                    for device_id, ip, email, password, device_name in tapo_tasks:
+                        tasks.append(get_tapo_status(ip, email, password, device_name))
+                    
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    
+                    for i, result in enumerate(results):
+                        device_id, ip, email, password, device_name = tapo_tasks[i]
+                        
+                        if isinstance(result, Exception):
+                            display_name = device_name.replace('tapo_', '').replace('_', ' ').title()
+                            if display_name.endswith(' Monitor'):
+                                display_name = display_name[:-8]
+                            status = {
+                                'name': display_name,
+                                'type': 'Smart Plug',
+                                'ip': ip,
+                                'status': 'unknown',
+                                'online': False,
+                                'id': device_id
+                            }
+                            tapo_devices.append(status)
+                        else:
+                            result['id'] = device_id
+                            tapo_devices.append(result)
+                
+                if tapo_tasks:
+                    loop.run_until_complete(load_all_tapo_devices())
+                
+                return tapo_devices
+            finally:
+                loop.close()
+        
+        # Prepare Matter device loading function
+        def load_matter_devices():
+            """Load all Matter devices"""
+            if not MATTER_AVAILABLE:
+                return []
+            
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            try:
+                global matter_devices_list
+                matter_devices = []
+                matter_devices_list = []  # Reset list for timeseries collection
+                
+                all_matter_devices = get_all_matter_devices()
+                
+                async def load_all_matter_devices():
+                    tasks = []
+                    for device_info in all_matter_devices:
+                        device_id = device_info['device_id']
+                        ip = device_info.get('ip')
+                        port = device_info.get('port', 5540)
+                        device_name = device_info.get('name', device_id)
+                        
+                        matter_devices_list.append({
+                            'device_id': device_id,
+                            'ip': ip,
+                            'name': device_name,
+                            'port': port
+                        })
+                        
+                        tasks.append(get_matter_status(device_id, ip, port, device_name))
+                    
+                    if tasks:
+                        results = await asyncio.gather(*tasks, return_exceptions=True)
+                        for i, result in enumerate(results):
+                            if isinstance(result, Exception):
+                                device_info = all_matter_devices[i]
+                                matter_devices.append({
+                                    'name': device_info.get('name', device_info['device_id']),
+                                    'type': 'Smart Plug',
+                                    'uuid': device_info['device_id'],
+                                    'id': device_info['device_id'],
+                                    'status': 'unknown',
+                                    'online': False
+                                })
+                            else:
+                                matter_devices.append(result)
+                
+                if all_matter_devices:
+                    loop.run_until_complete(load_all_matter_devices())
+                
+                return matter_devices
+            finally:
+                loop.close()
+
+        # Load all four device types in parallel using ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            # Submit all four tasks simultaneously
+            tapo_future = executor.submit(load_tapo_devices)
+            meross_future = executor.submit(lambda: run_in_meross_loop(get_meross_status_async()))
+            arlec_future = executor.submit(get_arlec_status)
+            matter_future = executor.submit(load_matter_devices)
+            
+            # Wait for all to complete and get results
+            tapo_devices = tapo_future.result()
+            meross_status = meross_future.result()
+            arlec_status = arlec_future.result()
+            matter_status = matter_future.result()
+
+        # Populate Arlec devices list for timeseries collection
+        global arlec_devices_list
+        arlec_devices_list = []
+        for device in arlec_status:
+            if device.get('online') and device.get('uuid'):
+                arlec_devices_list.append(device['uuid'])
+
+        return jsonify({
+            'success': True,
+            'tapo': tapo_devices,
+            'meross': meross_status,
+            'arlec': arlec_status,
+            'matter': matter_status
+        })
+    except Exception as e:
+        print(f"Error in get_devices: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/tapo/<device_id>/<action>', methods=['POST'])
+def control_tapo_device(device_id, action):
+    """Control a Tapo device"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    try:
+        # Check dynamic storage first, then fall back to KNOWN_DEVICES
+        device_info = tapo_devices_storage.get(device_id)
+        if device_info:
+            ip = device_info.get('ip')
+            email = device_info.get('email')
+            password = device_info.get('password')
+        else:
+            ip = KNOWN_DEVICES.get(device_id)
+            email = None
+            password = None
+        
+        if not ip:
+            return jsonify({'success': False, 'error': 'Device not found'}), 404
+
+        result = loop.run_until_complete(control_tapo(ip, action, email, password))
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        loop.close()
+
+
+@app.route('/api/tapo/add', methods=['POST'])
+def add_tapo_device():
+    """Add a new Tapo device"""
+    try:
+        data = request.get_json()
+        device_name = data.get('name', '').strip()
+        ip = data.get('ip', '').strip()
+        email = data.get('email', '').strip()
+        password = data.get('password', '').strip()
+
+        if not device_name or not ip or not email or not password:
+            return jsonify({'success': False, 'error': 'Missing required fields: name, ip, email, password'}), 400
+
+        # Test connection first
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            status = loop.run_until_complete(get_tapo_status(ip, email, password))
+            if not status.get('online'):
+                return jsonify({'success': False, 'error': 'Could not connect to device. Check IP and credentials.'}), 400
+        finally:
+            loop.close()
+
+        # Generate device ID from IP (more unique)
+        device_id = f"tapo_{ip.replace('.', '_')}"
+        
+        # If device already exists, update it
+        if device_id in tapo_devices_storage:
+            return jsonify({
+                'success': False,
+                'error': f'Device with IP {ip} already exists'
+            }), 400
+        
+        # Store device info
+        tapo_devices_storage[device_id] = {
+            'ip': ip,
+            'email': email,
+            'password': password,
+            'name': device_name
+        }
+        
+        # Save to file
+        save_tapo_devices()
+
+        return jsonify({
+            'success': True,
+            'device_id': device_id,
+            'message': f'Device "{device_name}" added successfully'
+        })
+    except Exception as e:
+        print(f"Error adding Tapo device: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/meross/<uuid>/<action>', methods=['POST'])
+def control_meross_device(uuid, action):
+    """Control a Meross device"""
+    try:
+        # Use the dedicated Meross event loop
+        result = run_in_meross_loop(control_meross_async(uuid, action))
+        return jsonify(result)
+    except Exception as e:
+        print(f"Error in control_meross_device: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/matter/<device_id>/<action>', methods=['POST'])
+def control_matter_device(device_id, action):
+    """Control a Matter device"""
+    if not MATTER_AVAILABLE:
+        return jsonify({'success': False, 'error': 'Matter library not available'}), 503
+    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        # Get device info from MATTER_DEVICES
+        device_info = MATTER_DEVICES.get(device_id)
+        if not device_info:
+            # Try to find by device_id in all devices
+            all_devices = get_all_matter_devices()
+            device_info = None
+            for dev in all_devices:
+                if dev['device_id'] == device_id:
+                    device_info = dev
+                    break
+        
+        if not device_info:
+            return jsonify({'success': False, 'error': 'Device not found'}), 404
+        
+        ip = device_info.get('ip')
+        port = device_info.get('port', 5540)
+        
+        result = loop.run_until_complete(control_matter(device_id, action, ip, port))
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        loop.close()
+
+
+@app.route('/api/arlec/<uuid>/<action>', methods=['POST'])
+def control_arlec_device(uuid, action):
+    """Control an Arlec device (using uuid to match Meross API format)"""
+    try:
+        result = control_arlec(uuid, action)
+        return jsonify(result)
+    except Exception as e:
+        print(f"Error in control_arlec_device: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/timeseries', methods=['GET'])
+def get_timeseries():
+    """Get timeseries power data - now handled client-side only"""
+    # Return empty data - client will use localStorage cache
+    return jsonify({
+        'success': True,
+        'timeseries': {}
+    })
+
+
+@app.route('/api/timeseries', methods=['POST'])
+def add_timeseries_data():
+    """Add timeseries data point from client - now handled client-side only"""
+    # No-op endpoint for compatibility, data is stored in browser localStorage
+    return jsonify({
+        'success': True,
+        'message': 'Data stored client-side'
+    })
+
+
+@app.route('/api/aemo/prices', methods=['GET'])
+def get_aemo_prices():
+    """Get AEMO price data for VIC region (constant $0.15/kWh for now)"""
+    try:
+        # Get interval parameter (in seconds) to determine date range
+        interval_param = request.args.get('interval', '1800')  # Default 30 minutes
+        try:
+            interval_seconds = int(interval_param)
+        except ValueError:
+            interval_seconds = 1800
+
+        # Calculate time range
+        now = datetime.now()
+        start_time = now - timedelta(seconds=interval_seconds)
+        
+        # Generate 5-minute interval timestamps
+        prices = []
+        current_time = start_time
+        
+        # Round start_time to nearest 5-minute mark
+        minutes = current_time.minute
+        rounded_minutes = (minutes // 5) * 5
+        current_time = current_time.replace(minute=rounded_minutes, second=0, microsecond=0)
+        
+        # Generate price data points at 5-minute intervals
+        while current_time <= now:
+            prices.append({
+                'timestamp': current_time.isoformat(),
+                'price': 0.15  # Constant $0.15/kWh for now
+            })
+            current_time += timedelta(minutes=5)
+        
+        # Add forecast prices (next 30 minutes, 6 points at 5-minute intervals)
+        forecast_start = now.replace(second=0, microsecond=0)
+        forecast_minutes = (forecast_start.minute // 5) * 5
+        if forecast_minutes < forecast_start.minute:
+            forecast_minutes += 5
+            # Handle rollover to next hour if minutes exceed 59
+            if forecast_minutes >= 60:
+                forecast_minutes = 0
+                forecast_start = forecast_start.replace(hour=forecast_start.hour + 1, minute=0)
+            else:
+                forecast_start = forecast_start.replace(minute=forecast_minutes)
+        else:
+            forecast_start = forecast_start.replace(minute=forecast_minutes)
+        
+        for i in range(6):  # 6 × 5 minutes = 30 minutes forecast
+            forecast_time = forecast_start + timedelta(minutes=i * 5)
+            prices.append({
+                'timestamp': forecast_time.isoformat(),
+                'price': 0.15,  # Constant $0.15/kWh for now
+                'forecast': True
+            })
+        
+        return jsonify({
+            'success': True,
+            'region': 'VIC',
+            'prices': prices
+        })
+    except Exception as e:
+        print(f"Error in get_aemo_prices: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/cost', methods=['GET'])
+def get_cost_data():
+    """Calculate cost based on power usage and price data - now handled client-side only"""
+    # Return empty data - client will calculate from localStorage cache
+    return jsonify({
+        'success': True,
+        'costs': []
+    })
+
+
+def start_meross_loop():
+    """Start the dedicated Meross event loop in a background thread"""
+    global meross_loop
+    meross_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(meross_loop)
+    meross_loop.run_forever()
+
+
+def run_async_init():
+    """Initialize async components in the Meross loop"""
+    global meross_loop, meross_loop_thread
+
+    # Start the dedicated event loop thread
+    meross_loop_thread = Thread(target=start_meross_loop, daemon=True)
+    meross_loop_thread.start()
+
+    # Wait for loop to be ready
+    import time
+    time.sleep(0.5)
+
+    # Initialize Meross in that loop
+    try:
+        run_in_meross_loop(init_meross())
+
+        # Timeseries data collection is now handled client-side in the browser
+    except Exception as e:
+        print(f"Meross init error: {e}")
+
+
+if __name__ == '__main__':
+    print("=" * 60)
+    print("Smart Home Control Server")
+    print("=" * 60)
+
+    # Load dynamically added Tapo devices from file
+    print("\nLoading Tapo devices from file...")
+    load_tapo_devices()
+
+    # Initialize Arlec (Tuya Cloud)
+    print("\nInitializing Arlec connection...")
+    init_arlec()
+
+    # Initialize Meross with dedicated event loop
+    print("\nInitializing Meross connection...")
+    run_async_init()
+
+    print("\n[OK] Server ready!")
+    print("\nOpen your browser to:")
+    print("  http://localhost:5000")
+    print("\nPress Ctrl+C to stop")
+    print("=" * 60 + "\n")
+
+    app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
