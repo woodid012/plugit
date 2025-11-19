@@ -5,6 +5,7 @@ let powerChart = null;
 let costChart = null;
 let priceChart = null;
 let standalonePriceChart = null;
+let vic1DetailedPriceChart = null;
 let powerChartTimestamps = []; // Store power chart timestamps for cost chart alignment
 let powerChartLabels = []; // Store power chart labels for cost chart alignment
 let powerChartForecastStartIndex = 0; // Store forecast start index
@@ -220,70 +221,76 @@ async function loadTimeseriesData(providedDevicesData = null) {
             deviceDataMapsForChart[uuid] = dataMap;
         });
 
-        // Combine all devices into two series: Actual and Forecast
+        // Create individual series for each device
         const datasets = [];
         
-        // Calculate combined actual (historical) data - sum all devices
-        const combinedActualData = allTimestamps.map((ts, idx) => {
-            if (idx < forecastStartIndex) {
-                // Historical data - sum all devices
-                let totalPower = 0;
-                deviceUuids.forEach((uuid) => {
+        // Create a dataset for each device's actual (historical) data
+        deviceUuids.forEach((uuid, deviceIndex) => {
+            const deviceName = deviceNameMap[uuid] || `Device ${deviceIndex + 1}`;
+            const deviceColor = deviceColors[deviceIndex % deviceColors.length];
+            
+            // Calculate actual data for this device
+            const deviceActualData = allTimestamps.map((ts, idx) => {
+                if (idx < forecastStartIndex) {
+                    // Historical data for this device
                     const dataMap = deviceDataMapsForChart[uuid];
                     if (dataMap[ts]) {
-                        totalPower += dataMap[ts].power || 0;
+                        return dataMap[ts].power || 0;
                     }
-                });
-                return totalPower;
-            } else {
-                // Null for forecast period
-                return null;
-            }
+                    return 0;
+                } else {
+                    // Null for forecast period
+                    return null;
+                }
+            });
+
+            // Actual dataset (bars for historical period only)
+            datasets.push({
+                label: deviceName,
+                data: deviceActualData,
+                backgroundColor: deviceColor,
+                borderColor: deviceColor.replace('0.8', '1'),
+                borderWidth: 1,
+                order: 1
+            });
         });
 
-        // Calculate combined forecast data - sum all devices
-        const combinedForecastData = allTimestamps.map((ts, idx) => {
-            if (idx >= forecastStartIndex) {
-                // Forecast data - sum all devices
-                let totalPower = 0;
-                deviceUuids.forEach((uuid) => {
+        // Create a forecast dataset for each device
+        deviceUuids.forEach((uuid, deviceIndex) => {
+            const deviceName = deviceNameMap[uuid] || `Device ${deviceIndex + 1}`;
+            const deviceColor = deviceColors[deviceIndex % deviceColors.length];
+            
+            // Calculate forecast data for this device
+            const deviceForecastData = allTimestamps.map((ts, idx) => {
+                if (idx >= forecastStartIndex) {
+                    // Forecast data for this device
                     // Exclude if device has been off for 3 periods
                     if (!devicesToExcludeFromForecast.has(uuid)) {
-                        totalPower += forecastAverages[uuid] || 0;
+                        return forecastAverages[uuid] || 0;
                     }
-                });
-                return totalPower;
-            } else {
-                // Null for historical period
-                return null;
-            }
-        });
+                    return null;
+                } else {
+                    // Null for historical period
+                    return null;
+                }
+            });
 
-        // Actual dataset (bars for historical period only)
-        datasets.push({
-            label: 'Actual',
-            data: combinedActualData,
-            backgroundColor: 'rgba(102, 126, 234, 0.8)',
-            borderColor: 'rgba(102, 126, 234, 1)',
-            borderWidth: 1,
-            order: 1
-        });
-
-        // Forecast dataset (dashed line for forecast period only)
-        datasets.push({
-            type: 'line',
-            label: 'Forecast',
-            data: combinedForecastData,
-            backgroundColor: 'rgba(102, 126, 234, 0.2)',
-            borderColor: 'rgba(102, 126, 234, 0.7)',
-            borderWidth: 2,
-            borderDash: [8, 4],
-            fill: true,
-            tension: 0,
-            order: 2,
-            pointRadius: 0,
-            pointHoverRadius: 0,
-            spanGaps: false
+            // Forecast dataset (dashed line for forecast period only)
+            datasets.push({
+                type: 'line',
+                label: deviceName + ' (Forecast)',
+                data: deviceForecastData,
+                backgroundColor: deviceColor.replace('0.8', '0.2'),
+                borderColor: deviceColor.replace('0.8', '0.7'),
+                borderWidth: 2,
+                borderDash: [8, 4],
+                fill: false,
+                tension: 0,
+                order: 2,
+                pointRadius: 0,
+                pointHoverRadius: 0,
+                spanGaps: false
+            });
         });
 
         // Format timestamps for display (default to 30-minute view)
@@ -476,6 +483,7 @@ async function loadTimeseriesData(providedDevicesData = null) {
             loadCostData();
             loadPriceData();
             loadStandalonePriceChart();
+            loadVIC1DetailedPriceChart();
         });
     }
 }
@@ -572,12 +580,9 @@ async function loadCostData() {
                 costValues.push(null);
             }
 
-            // Map price data
-            if (priceMap[key] !== undefined) {
-                priceValues.push(priceMap[key]);
-            } else {
-                priceValues.push(null);
-            }
+            // Retail Tariff should use the estimated cost per kWh from settings (flat line)
+            // This maps the user's estimated cost setting to the Retail Tariff line
+            priceValues.push(pricePerKwh);
         });
 
         // For forecast period, calculate cost based on actual forecast power at each 30-second interval
@@ -701,7 +706,7 @@ async function loadCostData() {
                         yAxisID: 'y'
                     },
                     {
-                        label: 'Market Price',
+                        label: 'Retail Tariff',
                         data: historicalPriceData,
                         backgroundColor: 'rgba(255, 152, 0, 0.1)',
                         borderColor: 'rgba(255, 152, 0, 1)',
@@ -712,7 +717,7 @@ async function loadCostData() {
                         yAxisID: 'y1'
                     },
                     {
-                        label: 'Market Price (Forecast)',
+                        label: 'Retail Tariff (Forecast)',
                         data: forecastPriceData,
                         backgroundColor: 'rgba(255, 152, 0, 0.05)',
                         borderColor: 'rgba(255, 152, 0, 0.7)',
@@ -845,13 +850,42 @@ async function loadPriceData() {
         const region = appSettings?.region || 'VIC1';
 
         // Calculate time range from power chart timestamps
-        const startTime = powerChartTimestamps[0];
-        const endTime = powerChartTimestamps[powerChartTimestamps.length - 1];
+        // Convert to AEST (UTC+10) - market time is always AEST regardless of DST
+        // Chart time is in local time (AEDT UTC+11), market time is AEST (UTC+10)
+        // Example: 4:30 PM AEDT = 5:30 AM UTC = 3:30 PM AEST
+        // To convert: Get UTC time, add 10 hours to get AEST wall clock time, then format with +10:00
+        // Round down to previous 5-minute interval (AEMO data is only every 5 minutes)
+        // If first interval is at 36 minutes, get data for 35 minutes (lowest 5-minute boundary)
+        const startTimeDate = new Date(powerChartTimestamps[0]);
+        // Get UTC components
+        const startYear = startTimeDate.getUTCFullYear();
+        const startMonth = startTimeDate.getUTCMonth();
+        const startDay = startTimeDate.getUTCDate();
+        const startHour = startTimeDate.getUTCHours();
+        const startMinutes = startTimeDate.getUTCMinutes();
+        // Round down to the lowest 5-minute interval (e.g., 36 -> 35, 37 -> 35, 38 -> 35)
+        const roundedStartMinutes = Math.floor(startMinutes / 5) * 5;
         
+        // Create AEST time by adding 10 hours to UTC (to get AEST wall clock time)
+        // Then format as ISO with +10:00 timezone
+        const startTimeAEST = new Date(Date.UTC(startYear, startMonth, startDay, startHour + 10, roundedStartMinutes, 0));
+        const startTime = startTimeAEST.toISOString().replace('Z', '+10:00');
+        
+        const endTimeDate = new Date(powerChartTimestamps[powerChartTimestamps.length - 1]);
         // Extend end time by 60 minutes to get additional export price data
-        const extendedEndTime = new Date(endTime);
-        extendedEndTime.setMinutes(extendedEndTime.getMinutes() + 60);
-        const extendedEndTimeISO = extendedEndTime.toISOString();
+        const extendedEndTimeUTC = new Date(endTimeDate.getTime() + (60 * 60 * 1000));
+        // Get UTC components
+        const endYear = extendedEndTimeUTC.getUTCFullYear();
+        const endMonth = extendedEndTimeUTC.getUTCMonth();
+        const endDay = extendedEndTimeUTC.getUTCDate();
+        const endHour = extendedEndTimeUTC.getUTCHours();
+        const endMinutes = extendedEndTimeUTC.getUTCMinutes();
+        const roundedEndMinutes = Math.floor(endMinutes / 5) * 5;
+        
+        // Create AEST time by adding 10 hours to UTC (to get AEST wall clock time)
+        // Then format as ISO with +10:00 timezone
+        const endTimeAEST = new Date(Date.UTC(endYear, endMonth, endDay, endHour + 10, roundedEndMinutes, 0));
+        const extendedEndTimeISO = endTimeAEST.toISOString().replace('Z', '+10:00');
 
         // Fetch Historical (Export_Price) and Forecast (Forecast_Price) data from MongoDB (extended by 60 minutes)
         let mongoData = null;
@@ -919,89 +953,17 @@ async function loadPriceData() {
             }
         }
 
-        // Fallback: if no MongoDB data, use old logic with single priceMap
-        const priceMap = new Map();
+        // Only use MongoDB data - no fallback to local cache or old endpoints
         if (historicalPriceMap.size === 0 && forecastPriceMap.size === 0) {
-            // Fallback to old endpoints if MongoDB has no data
-            let priceData = null;
-            try {
-                // Try main server endpoint first
-                const response = await fetch('/api/nem/prices/latest');
-                if (response.ok) {
-                    priceData = await response.json();
-                } else {
-                    // Fallback to power_price API server on port 5000 (if running separately)
-                    try {
-                        const fallbackResponse = await fetch('http://localhost:5000/api/prices/latest');
-                        if (fallbackResponse.ok) {
-                            priceData = await fallbackResponse.json();
-                        }
-                    } catch (fallbackError) {
-                        // If that fails, try the AEMO endpoint as last resort
-                        try {
-                            const aemoResponse = await fetch('/api/aemo/prices');
-                            if (aemoResponse.ok) {
-                                const aemoData = await aemoResponse.json();
-                                // Transform to match expected format
-                                priceData = {
-                                    series: [{
-                                        name: 'dispatch',
-                                        label: 'Price (Historical)',
-                                        data: aemoData.prices ? aemoData.prices.map(p => ({
-                                            x: p.timestamp,
-                                            y: p.price
-                                        })) : []
-                                    }]
-                                };
-                            }
-                        } catch (aemoError) {
-                            console.warn('Could not fetch price data from any source:', aemoError);
-                        }
-                    }
-                }
-            } catch (error) {
-                console.warn('Could not fetch price data:', error);
-            }
-
-            if (priceData && priceData.series && priceData.series.length > 0) {
-                // Process each series type in priority order
-                const seriesPriority = ['dispatch', 'p5min', 'predispatch'];
-                seriesPriority.forEach(seriesName => {
-                    const series = priceData.series.find(s => s.name === seriesName);
-                    if (series && series.data) {
-                        series.data.forEach(point => {
-                            if (point.x && point.y !== null && point.y !== undefined) {
-                                // Round timestamp to nearest 5-minute mark
-                                const timestamp = new Date(point.x);
-                                const minutes = timestamp.getMinutes();
-                                const roundedMinutes = Math.floor(minutes / 5) * 5;
-                                const roundedTime = new Date(timestamp);
-                                roundedTime.setMinutes(roundedMinutes, 0, 0);
-                                const key = roundedTime.toISOString();
-
-                                // Only add if not already set (priority: dispatch > p5min > predispatch)
-                                if (!priceMap.has(key)) {
-                                    priceMap.set(key, {
-                                        price: point.y,
-                                        source: seriesName,
-                                        timestamp: roundedTime
-                                    });
-                                }
-                            }
-                        });
-                    }
-                });
-            }
-        }
-
-        // Check if we have any price data
-        if (historicalPriceMap.size === 0 && forecastPriceMap.size === 0 && priceMap.size === 0) {
+            console.warn('No MongoDB price data available for region:', region);
             document.getElementById('price-chart-section').style.display = 'none';
             return;
         }
 
         // Map prices to 30-second timestamps (create flat lines for each 5-minute interval)
-        const historicalPriceData = [];
+        // Price (Actual) uses the same data source as "Historical Price" from the detailed chart
+        // Price (Forecast) uses the same data source as "Forecast (Combined)" from the detailed chart
+        const actualPriceData = [];
         const forecastPriceData = [];
         
         // Track the current 5-minute interval to create flat lines
@@ -1019,37 +981,40 @@ async function loadPriceData() {
 
             // Check if we're in a new 5-minute interval
             if (key !== currentIntervalKey) {
-                // New interval - get prices for this interval
-                if (historicalPriceMap.size > 0 || forecastPriceMap.size > 0) {
-                    // Use MongoDB data (separate historical and forecast)
-                    const historicalEntry = historicalPriceMap.get(key);
-                    const forecastEntry = forecastPriceMap.get(key);
-                    currentHistoricalPrice = historicalEntry ? historicalEntry.price : null;
-                    currentForecastPrice = forecastEntry ? forecastEntry.price : null;
-                } else {
-                    // Fallback: use old logic with single priceMap
-                    const priceEntry = priceMap.get(key);
-                    const price = priceEntry ? priceEntry.price : null;
-                    // Determine if this is historical or forecast based on forecastStartIndex
-                    const isForecast = idx >= forecastStartIndex;
-                    if (isForecast) {
-                        currentForecastPrice = price;
-                        currentHistoricalPrice = null;
-                    } else {
-                        currentHistoricalPrice = price;
-                        currentForecastPrice = null;
-                    }
-                }
+                // New interval - get prices from MongoDB data (separate historical and forecast)
+                const historicalEntry = historicalPriceMap.get(key);
+                const forecastEntry = forecastPriceMap.get(key);
+                // Price (Actual) uses only historical price (same as "Historical Price" in detailed chart)
+                currentHistoricalPrice = historicalEntry ? historicalEntry.price : null;
+                // Price (Forecast) uses forecast price (same as "Forecast (Combined)" in detailed chart)
+                currentForecastPrice = forecastEntry ? forecastEntry.price : null;
+                
                 currentIntervalKey = key;
             }
 
             // Use the current interval prices (flat line for all 30-second points in this 5-minute interval)
-            historicalPriceData.push(currentHistoricalPrice);
+            // Actual price: use only historical price (same data source as "Historical Price" in detailed chart)
+            actualPriceData.push(currentHistoricalPrice);
+            // Forecast price: use forecast price for all timestamps (same data source as "Forecast (Combined)" in detailed chart)
             forecastPriceData.push(currentForecastPrice);
         });
 
         // Show chart section
         document.getElementById('price-chart-section').style.display = 'block';
+
+        // Update chart title with region (region is already declared above)
+        const regionNames = {
+            'VIC1': 'Victoria',
+            'NSW1': 'New South Wales',
+            'QLD1': 'Queensland',
+            'SA1': 'South Australia',
+            'TAS1': 'Tasmania'
+        };
+        const regionName = regionNames[region] || region;
+        const chartTitleElement = document.querySelector('#price-chart-section .chart-title');
+        if (chartTitleElement) {
+            chartTitleElement.textContent = `Power Price - ${regionName} (${region}) (5-minute intervals)`;
+        }
 
         // Destroy existing chart if it exists
         if (priceChart) {
@@ -1064,8 +1029,8 @@ async function loadPriceData() {
                 labels: powerChartLabels,
                 datasets: [
                     {
-                        label: 'Price (Historical)',
-                        data: historicalPriceData,
+                        label: 'Price (Actual)',
+                        data: actualPriceData,
                         backgroundColor: 'rgba(46, 134, 171, 0.2)',
                         borderColor: 'rgba(46, 134, 171, 1)',
                         borderWidth: 2,
@@ -1147,13 +1112,17 @@ async function loadPriceData() {
 // Load standalone price chart using exact same timestamps as power consumption chart
 async function loadStandalonePriceChart() {
     try {
+        // Check if standalone chart section exists - if not, skip silently
+        const standaloneSection = document.getElementById('standalone-price-chart-section');
+        if (!standaloneSection) {
+            // Section doesn't exist, skip loading this chart
+            return;
+        }
+        
         // Use the exact same timestamps as the power usage chart
         if (!powerChartTimestamps || powerChartTimestamps.length === 0) {
             console.warn('No power chart timestamps available for price chart');
-            const standaloneSection = document.getElementById('standalone-price-chart-section');
-            if (standaloneSection) {
-                standaloneSection.style.display = 'none';
-            }
+            standaloneSection.style.display = 'none';
             return;
         }
 
@@ -1177,19 +1146,13 @@ async function loadStandalonePriceChart() {
             }
         } catch (error) {
             console.warn('Could not fetch price data:', error);
-            const standaloneSection = document.getElementById('standalone-price-chart-section');
-            if (standaloneSection) {
-                standaloneSection.style.display = 'none';
-            }
+            standaloneSection.style.display = 'none';
             return;
         }
 
         if (!priceData || !priceData.series || priceData.series.length === 0) {
             console.warn('No price data available');
-            const standaloneSection = document.getElementById('standalone-price-chart-section');
-            if (standaloneSection) {
-                standaloneSection.style.display = 'none';
-            }
+            standaloneSection.style.display = 'none';
             return;
         }
 
@@ -1252,12 +1215,7 @@ async function loadStandalonePriceChart() {
             });
         });
 
-        // Show chart section
-        const standaloneSection = document.getElementById('standalone-price-chart-section');
-        if (!standaloneSection) {
-            console.warn('Standalone price chart section not found');
-            return;
-        }
+        // Show chart section (already checked at start of function)
         standaloneSection.style.display = 'block';
 
         // Destroy existing chart if it exists
@@ -1299,10 +1257,7 @@ async function loadStandalonePriceChart() {
 
         if (datasets.length === 0) {
             console.warn('No price data overlaps with timeseries data');
-            const standaloneSection = document.getElementById('standalone-price-chart-section');
-            if (standaloneSection) {
-                standaloneSection.style.display = 'none';
-            }
+            standaloneSection.style.display = 'none';
             return;
         }
 
@@ -1408,10 +1363,330 @@ async function loadStandalonePriceChart() {
 
     } catch (error) {
         console.error('Error loading standalone price chart:', error);
-        const standaloneSection = document.getElementById('standalone-price-chart-section');
-        if (standaloneSection) {
+        // standaloneSection is already checked at start of function
+        if (typeof standaloneSection !== 'undefined' && standaloneSection) {
             standaloneSection.style.display = 'none';
         }
+    }
+}
+
+// Load detailed price chart with all price sources
+async function loadVIC1DetailedPriceChart() {
+    try {
+        // Get region from settings (default to VIC1)
+        const region = appSettings?.region || 'VIC1';
+        
+        // Calculate time range - get last 1 hour of data
+        const now = new Date();
+        const startTimeDate = new Date(now.getTime() - 60 * 60 * 1000); // 1 hour ago
+        
+        // Convert to AEST (UTC+10) - market time is always AEST regardless of DST
+        const startYear = startTimeDate.getUTCFullYear();
+        const startMonth = startTimeDate.getUTCMonth();
+        const startDay = startTimeDate.getUTCDate();
+        const startHour = startTimeDate.getUTCHours();
+        const startMinutes = startTimeDate.getUTCMinutes();
+        const roundedStartMinutes = Math.floor(startMinutes / 5) * 5;
+        
+        const startTimeAEST = new Date(Date.UTC(startYear, startMonth, startDay, startHour + 10, roundedStartMinutes, 0));
+        const startTime = startTimeAEST.toISOString().replace('Z', '+10:00');
+        
+        const endTimeDate = new Date(now.getTime() + (60 * 60 * 1000)); // 1 hour ahead
+        const endYear = endTimeDate.getUTCFullYear();
+        const endMonth = endTimeDate.getUTCMonth();
+        const endDay = endTimeDate.getUTCDate();
+        const endHour = endTimeDate.getUTCHours();
+        const endMinutes = endTimeDate.getUTCMinutes();
+        const roundedEndMinutes = Math.floor(endMinutes / 5) * 5;
+        
+        const endTimeAEST = new Date(Date.UTC(endYear, endMonth, endDay, endHour + 10, roundedEndMinutes, 0));
+        const endTime = endTimeAEST.toISOString().replace('Z', '+10:00');
+
+        // Fetch all price data from MongoDB
+        let mongoData = null;
+        try {
+            const response = await fetch(
+                `/api/mongodb/prices?region=${encodeURIComponent(region)}&start_time=${encodeURIComponent(startTime)}&end_time=${encodeURIComponent(endTime)}`
+            );
+            if (response.ok) {
+                mongoData = await response.json();
+            } else {
+                console.warn('MongoDB price endpoint returned error:', response.status);
+            }
+        } catch (error) {
+            console.warn('Could not fetch MongoDB price data:', error);
+        }
+
+        if (!mongoData || !mongoData.success) {
+            document.getElementById('vic1-detailed-price-chart-section').style.display = 'none';
+            return;
+        }
+
+        // Build maps for all price types
+        const historicalPriceMap = new Map();
+        const forecast5minPriceMap = new Map();
+        const forecast30minPriceMap = new Map();
+        const forecastPriceMap = new Map();
+
+        // Process Historical data
+        if (mongoData.historical && Array.isArray(mongoData.historical)) {
+            mongoData.historical.forEach(point => {
+                if (point.x && point.y !== null && point.y !== undefined) {
+                    const timestamp = new Date(point.x);
+                    const minutes = timestamp.getMinutes();
+                    const roundedMinutes = Math.floor(minutes / 5) * 5;
+                    const roundedTime = new Date(timestamp);
+                    roundedTime.setMinutes(roundedMinutes, 0, 0);
+                    const key = roundedTime.toISOString();
+                    historicalPriceMap.set(key, point.y);
+                }
+            });
+        }
+
+        // Process Forecast 5-minute data
+        if (mongoData.forecast_5min && Array.isArray(mongoData.forecast_5min)) {
+            mongoData.forecast_5min.forEach(point => {
+                if (point.x && point.y !== null && point.y !== undefined) {
+                    const timestamp = new Date(point.x);
+                    const minutes = timestamp.getMinutes();
+                    const roundedMinutes = Math.floor(minutes / 5) * 5;
+                    const roundedTime = new Date(timestamp);
+                    roundedTime.setMinutes(roundedMinutes, 0, 0);
+                    const key = roundedTime.toISOString();
+                    forecast5minPriceMap.set(key, point.y);
+                }
+            });
+        }
+
+        // Process Forecast 30-minute data
+        if (mongoData.forecast_30min && Array.isArray(mongoData.forecast_30min)) {
+            mongoData.forecast_30min.forEach(point => {
+                if (point.x && point.y !== null && point.y !== undefined) {
+                    const timestamp = new Date(point.x);
+                    const minutes = timestamp.getMinutes();
+                    const roundedMinutes = Math.floor(minutes / 5) * 5;
+                    const roundedTime = new Date(timestamp);
+                    roundedTime.setMinutes(roundedMinutes, 0, 0);
+                    const key = roundedTime.toISOString();
+                    forecast30minPriceMap.set(key, point.y);
+                }
+            });
+        }
+
+        // Process Forecast data
+        if (mongoData.forecast && Array.isArray(mongoData.forecast)) {
+            mongoData.forecast.forEach(point => {
+                if (point.x && point.y !== null && point.y !== undefined) {
+                    const timestamp = new Date(point.x);
+                    const minutes = timestamp.getMinutes();
+                    const roundedMinutes = Math.floor(minutes / 5) * 5;
+                    const roundedTime = new Date(timestamp);
+                    roundedTime.setMinutes(roundedMinutes, 0, 0);
+                    const key = roundedTime.toISOString();
+                    forecastPriceMap.set(key, point.y);
+                }
+            });
+        }
+
+        // Generate continuous 5-minute intervals from start to end time
+        const continuousTimestamps = [];
+        
+        // Parse start and end times - convert from AEST ISO string to Date
+        // startTime and endTime are in format "2025-11-19T05:25:00+10:00"
+        // Parse as local time (the +10:00 indicates AEST offset)
+        const continuousStartTime = new Date(startTime);
+        const continuousEndTime = new Date(endTime);
+        
+        // Round start time to nearest 5-minute mark (same logic as price map generation)
+        const continuousStartMinutes = continuousStartTime.getMinutes();
+        const continuousRoundedStartMinutes = Math.floor(continuousStartMinutes / 5) * 5;
+        const continuousStart = new Date(continuousStartTime);
+        continuousStart.setMinutes(continuousRoundedStartMinutes, 0, 0);
+        
+        // Generate continuous 5-minute intervals
+        let currentTime = new Date(continuousStart);
+        while (currentTime <= continuousEndTime) {
+            // Round to 5-minute mark (same logic as used in price map generation)
+            const minutes = currentTime.getMinutes();
+            const roundedMinutes = Math.floor(minutes / 5) * 5;
+            const roundedTime = new Date(currentTime);
+            roundedTime.setMinutes(roundedMinutes, 0, 0);
+            
+            // Generate key in same format as price maps (ISO string)
+            // This matches how the price maps are keyed: roundedTime.toISOString()
+            const key = roundedTime.toISOString();
+            continuousTimestamps.push(key);
+            
+            // Move to next 5-minute interval
+            currentTime = new Date(currentTime.getTime() + 5 * 60 * 1000);
+        }
+
+        if (continuousTimestamps.length === 0) {
+            document.getElementById('vic1-detailed-price-chart-section').style.display = 'none';
+            return;
+        }
+
+        // Map prices to continuous timestamps
+        const historicalData = [];
+        const forecast5minData = [];
+        const forecast30minData = [];
+        const forecastData = [];
+        const labels = [];
+
+        continuousTimestamps.forEach((ts) => {
+            const timestamp = new Date(ts);
+            labels.push(timestamp.toLocaleString('en-AU', {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            }));
+
+            historicalData.push(historicalPriceMap.get(ts) || null);
+            forecast5minData.push(forecast5minPriceMap.get(ts) || null);
+            forecast30minData.push(forecast30minPriceMap.get(ts) || null);
+            forecastData.push(forecastPriceMap.get(ts) || null);
+        });
+
+        // Show chart section
+        document.getElementById('vic1-detailed-price-chart-section').style.display = 'block';
+
+        // Update chart title with region
+        const regionNames = {
+            'VIC1': 'Victoria',
+            'NSW1': 'New South Wales',
+            'QLD1': 'Queensland',
+            'SA1': 'South Australia',
+            'TAS1': 'Tasmania'
+        };
+        const regionName = regionNames[region] || region;
+        const chartTitleElement = document.querySelector('#vic1-detailed-price-chart-section .chart-title');
+        if (chartTitleElement) {
+            chartTitleElement.textContent = `${regionName} (${region}) Price Breakdown - All Sources`;
+        }
+
+        // Destroy existing chart if it exists
+        if (vic1DetailedPriceChart) {
+            vic1DetailedPriceChart.destroy();
+        }
+
+        // Create chart
+        const ctx = document.getElementById('vic1DetailedPriceChart').getContext('2d');
+        vic1DetailedPriceChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Historical Price',
+                        data: historicalData,
+                        backgroundColor: 'rgba(46, 134, 171, 0.2)',
+                        borderColor: 'rgba(46, 134, 171, 1)',
+                        borderWidth: 2,
+                        fill: false,
+                        tension: 0,
+                        stepped: 'before',
+                        pointRadius: 2,
+                        pointHoverRadius: 5
+                    },
+                    {
+                        label: 'Forecast 5-min',
+                        data: forecast5minData,
+                        backgroundColor: 'rgba(162, 59, 114, 0.2)',
+                        borderColor: 'rgba(162, 59, 114, 1)',
+                        borderWidth: 2,
+                        borderDash: [5, 5],
+                        fill: false,
+                        tension: 0,
+                        stepped: 'before',
+                        pointRadius: 2,
+                        pointHoverRadius: 5
+                    },
+                    {
+                        label: 'Forecast 30-min',
+                        data: forecast30minData,
+                        backgroundColor: 'rgba(241, 143, 1, 0.2)',
+                        borderColor: 'rgba(241, 143, 1, 1)',
+                        borderWidth: 2,
+                        borderDash: [10, 5],
+                        fill: false,
+                        tension: 0,
+                        stepped: 'before',
+                        pointRadius: 2,
+                        pointHoverRadius: 5
+                    },
+                    {
+                        label: 'Forecast (Combined)',
+                        data: forecastData,
+                        backgroundColor: 'rgba(76, 175, 80, 0.2)',
+                        borderColor: 'rgba(76, 175, 80, 1)',
+                        borderWidth: 2,
+                        borderDash: [8, 4],
+                        fill: false,
+                        tension: 0,
+                        stepped: 'before',
+                        pointRadius: 2,
+                        pointHoverRadius: 5
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                plugins: {
+                    legend: {
+                        position: 'top',
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            label: function(context) {
+                                const value = context.parsed.y;
+                                if (value === null) return '';
+                                return `${context.dataset.label}: $${value.toFixed(2)} AUD/MWh`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        title: {
+                            display: true,
+                            text: 'Time (5-minute intervals)'
+                        },
+                        ticks: {
+                            maxRotation: 45,
+                            minRotation: 45,
+                            autoSkip: true,
+                            maxTicksLimit: 20
+                        }
+                    },
+                    y: {
+                        display: true,
+                        title: {
+                            display: true,
+                            text: 'Price (AUD/MWh)'
+                        },
+                        beginAtZero: false,
+                        ticks: {
+                            callback: function(value) {
+                                return '$' + value.toFixed(2);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('Error loading VIC1 detailed price chart:', error);
+        document.getElementById('vic1-detailed-price-chart-section').style.display = 'none';
     }
 }
 

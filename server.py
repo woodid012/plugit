@@ -1134,7 +1134,7 @@ def get_nem_prices_latest():
 
 @app.route('/api/mongodb/prices', methods=['GET'])
 def get_mongodb_prices():
-    """Get Historical (Export_Price) and Forecast (Forecast_Price) data from MongoDB for a specific region and time range"""
+    """Get Historical (historical_price.price) and Forecast (Forecast_Price) data from MongoDB for a specific region and time range"""
     try:
         from pymongo.mongo_client import MongoClient
         from pymongo.server_api import ServerApi
@@ -1193,6 +1193,8 @@ def get_mongodb_prices():
         # Format results - separate historical and forecast series
         historical_prices = []
         forecast_prices = []
+        historical_5min_prices = []
+        historical_30min_prices = []
         
         for doc in documents:
             timestamp = doc.get('timestamp')
@@ -1202,13 +1204,35 @@ def get_mongodb_prices():
             else:
                 ts_str = timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp)
             
-            # Historical series (Export_Price)
-            export_price = doc.get('Export_Price')
-            if export_price is not None:
-                historical_prices.append({
-                    'x': ts_str,
-                    'y': float(export_price)
-                })
+            # Historical series (historical_price.price from nested object)
+            historical_price_obj = doc.get('historical_price')
+            if historical_price_obj and isinstance(historical_price_obj, dict):
+                historical_price_value = historical_price_obj.get('price')
+                if historical_price_value is not None:
+                    historical_prices.append({
+                        'x': ts_str,
+                        'y': float(historical_price_value)
+                    })
+            
+            # Forecast 5-minute series (dispatch_5min.price from nested object)
+            dispatch_5min_obj = doc.get('dispatch_5min')
+            if dispatch_5min_obj and isinstance(dispatch_5min_obj, dict):
+                dispatch_5min_value = dispatch_5min_obj.get('price')
+                if dispatch_5min_value is not None:
+                    historical_5min_prices.append({
+                        'x': ts_str,
+                        'y': float(dispatch_5min_value)
+                    })
+            
+            # Forecast 30-minute series (dispatch_30min.price from nested object)
+            dispatch_30min_obj = doc.get('dispatch_30min')
+            if dispatch_30min_obj and isinstance(dispatch_30min_obj, dict):
+                dispatch_30min_value = dispatch_30min_obj.get('price')
+                if dispatch_30min_value is not None:
+                    historical_30min_prices.append({
+                        'x': ts_str,
+                        'y': float(dispatch_30min_value)
+                    })
             
             # Forecast series (Forecast_Price)
             forecast_price = doc.get('Forecast_Price')
@@ -1225,8 +1249,12 @@ def get_mongodb_prices():
             'region': region,
             'historical': historical_prices,
             'forecast': forecast_prices,
+            'forecast_5min': historical_5min_prices,
+            'forecast_30min': historical_30min_prices,
             'historical_count': len(historical_prices),
-            'forecast_count': len(forecast_prices)
+            'forecast_count': len(forecast_prices),
+            'forecast_5min_count': len(historical_5min_prices),
+            'forecast_30min_count': len(historical_30min_prices)
         })
         
     except Exception as e:

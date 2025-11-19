@@ -61,12 +61,25 @@ function saveSettings(event) {
     
     // Reload charts to reflect new settings
     if (typeof powerChartTimestamps !== 'undefined' && powerChartTimestamps && powerChartTimestamps.length > 0) {
-        if (typeof loadCostData === 'function') {
-            loadCostData();
-        }
-        // Reload price chart if region changed
-        if (oldRegion !== newSettings.region && typeof loadPriceData === 'function') {
-            loadPriceData();
+        // Reload all charts if region changed (cost chart uses price data, price chart needs region)
+        if (oldRegion !== newSettings.region) {
+            if (typeof loadCostData === 'function') {
+                loadCostData();
+            }
+            if (typeof loadPriceData === 'function') {
+                loadPriceData();
+            }
+            if (typeof loadStandalonePriceChart === 'function') {
+                loadStandalonePriceChart();
+            }
+            if (typeof loadVIC1DetailedPriceChart === 'function') {
+                loadVIC1DetailedPriceChart();
+            }
+        } else {
+            // Region didn't change, just reload cost data if needed
+            if (typeof loadCostData === 'function') {
+                loadCostData();
+            }
         }
     }
     

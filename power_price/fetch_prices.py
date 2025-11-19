@@ -417,15 +417,60 @@ def parse_price_csv(csv_path: str, region: str = 'VIC1', hours_ahead: int = 12, 
         return []
 
 
+def parse_timestamp_from_filename(filename: str) -> Optional[datetime]:
+    """
+    Parse timestamp from NEMweb filename and convert to datetime
+    Example: PUBLIC_DISPATCH_202511191705_20251119170021_LEGACY.zip -> 2025-11-19 17:05:00
+    
+    Returns datetime object in AEST timezone, or None if parsing fails
+    """
+    import re
+    # Pattern matches YYYYMMDDHHMM (12 digits) - first occurrence is the settlement date
+    match = re.search(r'(\d{12})', filename)
+    if match:
+        timestamp_str = match.group(1)
+        try:
+            # Parse YYYYMMDDHHMM format
+            year = int(timestamp_str[0:4])
+            month = int(timestamp_str[4:6])
+            day = int(timestamp_str[6:8])
+            hour = int(timestamp_str[8:10])
+            minute = int(timestamp_str[10:12])
+            # Create datetime and localize to AEST
+            dt = datetime(year, month, day, hour, minute, 0)
+            return AEST_FIXED.localize(dt)
+        except (ValueError, IndexError) as e:
+            print(f"[WARNING] Could not parse timestamp from filename {filename}: {e}")
+            return None
+    return None
+
+
 def parse_region_csv(csv_path: str, region: str = 'VIC1', table_name: str = 'DREGION',
-                     hours_ahead: int = 12, hours_back: int = 0) -> List[Dict]:
+                     hours_ahead: int = 12, hours_back: int = 0,
+                     expected_settlement_date: Optional[datetime] = None,
+                     source_filename: Optional[str] = None) -> List[Dict]:
     """
     Generic parser for regional price data from NEMweb CSV files
     Handles DREGION (dispatch), PDREGION (predispatch), and P5MIN_REGIONSOLUTION (5-min predispatch)
 
+    Args:
+        csv_path: Path to CSV file
+        region: Region code (e.g., 'VIC1')
+        table_name: Table name to parse (e.g., 'DREGION')
+        hours_ahead: Hours ahead to include (for forecast data)
+        hours_back: Hours back to include (for historical data)
+        expected_settlement_date: Expected settlement date from filename (for validation)
+        source_filename: Source filename for extracting expected settlement date if not provided
+
     Returns list of {timestamp, price} dictionaries
     """
     prices = []
+    
+    # If expected_settlement_date not provided but source_filename is, extract it
+    if expected_settlement_date is None and source_filename:
+        expected_settlement_date = parse_timestamp_from_filename(source_filename)
+        if expected_settlement_date:
+            print(f"[INFO] Expected settlement date from filename: {expected_settlement_date.strftime('%d/%m/%Y %H:%M:%S')}")
 
     try:
         with open(csv_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -520,6 +565,23 @@ def parse_region_csv(csv_path: str, region: str = 'VIC1', table_name: str = 'DRE
                         # Localize to AEST (UTC+10) - NEMweb market timestamps are always in AEST
                         # regardless of whether we're currently in daylight saving time
                         dt_local = AEST_FIXED.localize(dt)
+                        
+                        # Validate settlement date matches filename timestamp (for dispatch reports)
+                        # The SETTLEMENTDATE in the CSV row must equal the settlement date in the filename
+                        if expected_settlement_date and table_name.upper() == 'DREGION':
+                            # Compare settlement date to expected date from filename
+                            # Allow exact match or very small difference (within 1 minute for rounding)
+                            time_diff_seconds = abs((dt_local - expected_settlement_date).total_seconds())
+                            if time_diff_seconds > 60:  # More than 1 minute difference
+                                print(f"[WARNING] Settlement date mismatch: CSV row has {dt_local.strftime('%d/%m/%Y %H:%M:%S')}, "
+                                      f"filename expects {expected_settlement_date.strftime('%d/%m/%Y %H:%M:%S')} "
+                                      f"(difference: {time_diff_seconds:.0f} seconds) - SKIPPING ROW")
+                                continue
+                            elif time_diff_seconds > 0:
+                                # Small difference (within 1 minute) - use expected date from filename for consistency
+                                print(f"[INFO] Adjusting settlement date from {dt_local.strftime('%d/%m/%Y %H:%M:%S')} "
+                                      f"to {expected_settlement_date.strftime('%d/%m/%Y %H:%M:%S')} to match filename")
+                                dt_local = expected_settlement_date
 
                         # Filter by time range
                         # Include data within the specified time window (past or future)
@@ -1027,8 +1089,22 @@ def fetch_dispatch_prices(region: str = 'VIC1', hours_back: int = 24, force_refr
 
         print(f"[INFO] Parsing {csv_path}...")
 
+        # Extract expected settlement date from filename
+        expected_settlement_date = parse_timestamp_from_filename(os.path.basename(url))
+        if expected_settlement_date:
+            print(f"[INFO] Expected settlement date from filename: {expected_settlement_date.strftime('%d/%m/%Y %H:%M:%S')}")
+
         # Parse CSV - DISPATCH uses DREGION table
-        prices = parse_region_csv(csv_path, region, table_name='DREGION', hours_ahead=0, hours_back=hours_back)
+        # Pass expected settlement date for validation
+        prices = parse_region_csv(
+            csv_path, 
+            region, 
+            table_name='DREGION', 
+            hours_ahead=0, 
+            hours_back=hours_back,
+            expected_settlement_date=expected_settlement_date,
+            source_filename=os.path.basename(url)
+        )
 
         if not prices:
             print("[WARNING] No price data extracted")
@@ -1095,13 +1171,17 @@ def export_for_api() -> Dict:
     for data_type in ['dispatch', 'p5min', 'predispatch']:
         if data_type in cache:
             for timestamp_key, data in cache[data_type].items():
+                # Get region from data, skip if region is missing (shouldn't happen)
+                region = data.get('region')
+                if not region:
+                    continue  # Skip entries without region
                 for price_point in data.get('prices', []):
                     all_prices.append({
                         'timestamp': price_point['timestamp'],
                         'price': price_point['price'],
                         'data_type': data_type,
                         'source_file': data.get('source_file', ''),
-                        'region': data.get('region', 'VIC1'),
+                        'region': region,
                         'fetched_at': data.get('fetched_at', '')
                     })
 

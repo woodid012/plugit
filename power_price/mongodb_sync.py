@@ -16,18 +16,32 @@ import pytz
 
 try:
     from .fetch_prices import (
-        fetch_dispatch_prices,
         fetch_p5min_prices,
         fetch_predispatch_prices,
-        AEST
+        AEST,
+        AEST_FIXED
+    )
+    from .fetch_dispatch_historical import (
+        get_latest_dispatch_file,
+        download_and_extract_zip,
+        find_csv_file,
+        parse_dispatch_csv,
+        parse_timestamp_from_filename as parse_dispatch_timestamp
     )
 except ImportError:
     # If running as standalone script
     from fetch_prices import (
-        fetch_dispatch_prices,
         fetch_p5min_prices,
         fetch_predispatch_prices,
-        AEST
+        AEST,
+        AEST_FIXED
+    )
+    from fetch_dispatch_historical import (
+        get_latest_dispatch_file,
+        download_and_extract_zip,
+        find_csv_file,
+        parse_dispatch_csv,
+        parse_timestamp_from_filename as parse_dispatch_timestamp
     )
 
 # MongoDB connection details
@@ -145,6 +159,57 @@ def calculate_forecast_price(p5min: Optional[float], predispatch: Optional[float
     return None
 
 
+def clear_mongodb_collection():
+    """
+    Clear all documents from the MongoDB price_data collection
+    Returns True if successful, False otherwise
+    """
+    print("=" * 80)
+    print("Clearing MongoDB Price Data Collection")
+    print("=" * 80)
+    
+    # Connect to MongoDB
+    client = connect_mongodb()
+    if not client:
+        print("[ERROR] Cannot proceed without MongoDB connection")
+        return False
+    
+    db = client[DB_NAME]
+    collection = db[COLLECTION_NAME]
+    
+    try:
+        # Count documents before deletion
+        count_before = collection.count_documents({})
+        print(f"[INFO] Found {count_before} documents in collection")
+        
+        if count_before == 0:
+            print("[INFO] Collection is already empty")
+            client.close()
+            return True
+        
+        # Delete all documents
+        result = collection.delete_many({})
+        print(f"[OK] Deleted {result.deleted_count} documents from collection")
+        
+        # Verify collection is empty
+        count_after = collection.count_documents({})
+        if count_after == 0:
+            print("[OK] Collection successfully cleared")
+            client.close()
+            return True
+        else:
+            print(f"[WARNING] Collection still contains {count_after} documents")
+            client.close()
+            return False
+            
+    except Exception as e:
+        print(f"[ERROR] Failed to clear collection: {e}")
+        import traceback
+        traceback.print_exc()
+        client.close()
+        return False
+
+
 def sync_price_data_to_mongodb(force_refresh: bool = False):
     """
     Main function to sync all price data to MongoDB
@@ -186,140 +251,82 @@ def sync_price_data_to_mongodb(force_refresh: bool = False):
         # Fetch all three data types
         data_sources = {}
         
-        # 1. Historical dispatch prices (last 1 hour of actual prices)
-        # We need to fetch multiple dispatch files to get a full hour (12 x 5-minute intervals)
-        print(f"\n[1/3] Fetching historical dispatch prices for {region} (last 1 hour)...")
+        # 1. Historical dispatch prices (actual settlement data from latest dispatch report)
+        print(f"\n[1/3] Fetching historical dispatch prices (latest settlement period)...")
         try:
-            all_historical_prices = []
-            all_source_files = []
-            
-            # Fetch the latest dispatch file first
-            latest_dispatch = fetch_dispatch_prices(region=region, hours_back=1, force_refresh=force_refresh)
-            if latest_dispatch and latest_dispatch.get('prices'):
-                all_historical_prices.extend(latest_dispatch['prices'])
-                all_source_files.append(latest_dispatch.get('source_file', ''))
-            
-            # Now collect prices from cache AND MongoDB to build up the last hour
-            # Each dispatch file contains one 5-minute interval, so we need ~12 files for 1 hour
-            from datetime import timedelta
-            from fetch_prices import load_unified_cache, AEST_FIXED
-            
-            # Get current time in AEST
-            now_aest = datetime.now(AEST)
-            # Calculate cutoff time (1 hour ago)
-            cutoff_time = now_aest - timedelta(hours=1)
-            # Also allow up to 15 minutes in future (dispatch can be slightly ahead)
-            future_limit = now_aest + timedelta(minutes=15)
-            
-            # Convert to ISO strings for MongoDB query
-            cutoff_iso = cutoff_time.astimezone(AEST_FIXED).isoformat() if cutoff_time.tzinfo else AEST_FIXED.localize(cutoff_time).isoformat()
-            future_iso = future_limit.astimezone(AEST_FIXED).isoformat() if future_limit.tzinfo else AEST_FIXED.localize(future_limit).isoformat()
-            
-            # Query MongoDB for existing historical data in the last hour
-            # Use Export_Price as it has the best available price (historical > p5min > predispatch)
-            try:
-                existing_docs = collection.find({
-                    'region': region,
-                    'timestamp': {
-                        '$gte': cutoff_iso,
-                        '$lte': future_iso
-                    },
-                    'Export_Price': {'$ne': None}
-                }).sort('timestamp', 1)
-                
-                for doc in existing_docs:
-                    # Prefer historical_price if available, otherwise use Export_Price
-                    hist_price = doc.get('historical_price', {})
-                    export_price = doc.get('Export_Price')
+            # Get latest dispatch file (only fetch once for all regions)
+            if region == NEM_REGIONS[0]:  # Only fetch once for first region
+                print("[INFO] Getting latest dispatch report...")
+                dispatch_result = get_latest_dispatch_file()
+                if not dispatch_result:
+                    print("[ERROR] Could not find latest dispatch file")
+                    errors.append("Could not find latest dispatch file")
+                else:
+                    dispatch_url, settlement_timestamp = dispatch_result
+                    dispatch_filename = os.path.basename(dispatch_url)
                     
-                    # Use historical_price if available, otherwise Export_Price
-                    price_value = None
-                    source_file = None
-                    
-                    if hist_price and isinstance(hist_price, dict) and hist_price.get('price') is not None:
-                        price_value = hist_price['price']
-                        source_file = hist_price.get('source_file')
-                    elif export_price is not None:
-                        # Use Export_Price as fallback (it's calculated from best available source)
-                        price_value = export_price
-                        # Try to get source file from any available price source
-                        dispatch_5min = doc.get('dispatch_5min')
-                        dispatch_30min = doc.get('dispatch_30min')
-                        if dispatch_5min and isinstance(dispatch_5min, dict) and dispatch_5min.get('source_file'):
-                            source_file = dispatch_5min['source_file']
-                        elif dispatch_30min and isinstance(dispatch_30min, dict) and dispatch_30min.get('source_file'):
-                            source_file = dispatch_30min['source_file']
-                    
-                    if price_value is not None:
-                        price_entry = {
-                            'timestamp': doc['timestamp'],
-                            'price': price_value
-                        }
-                        # Check if we already have this timestamp
-                        if not any(p['timestamp'] == price_entry['timestamp'] for p in all_historical_prices):
-                            all_historical_prices.append(price_entry)
-                            if source_file:
-                                all_source_files.append(source_file)
-            except Exception as e:
-                print(f"[WARNING] Could not query MongoDB for historical data: {e}")
-            
-            # Also collect from cache (in case we have newer data not yet in MongoDB)
-            cache = load_unified_cache()
-            if 'dispatch' in cache and cache['dispatch']:
-                for timestamp_key, dispatch_entry in cache['dispatch'].items():
-                    if dispatch_entry and dispatch_entry.get('region') == region:
-                        entry_prices = dispatch_entry.get('prices', [])
-                        for price in entry_prices:
+                    # Parse expected settlement date from filename
+                    expected_settlement_date = parse_dispatch_timestamp(dispatch_filename)
+                    if not expected_settlement_date:
+                        print(f"[ERROR] Could not parse settlement date from filename: {dispatch_filename}")
+                        errors.append(f"Could not parse settlement date from {dispatch_filename}")
+                    else:
+                        print(f"[INFO] Latest dispatch file: {dispatch_filename}")
+                        print(f"[INFO] Settlement period: {expected_settlement_date.strftime('%d/%m/%Y %H:%M:%S')}")
+                        
+                        # Download and extract
+                        temp_dir = download_and_extract_zip(dispatch_url)
+                        if temp_dir:
                             try:
-                                price_ts_str = price['timestamp']
-                                # Parse timestamp (handle both with and without timezone)
-                                if 'T' in price_ts_str:
-                                    price_dt = datetime.fromisoformat(price_ts_str.replace('Z', '+00:00'))
+                                # Find CSV file
+                                csv_path = find_csv_file(temp_dir.name)
+                                if csv_path:
+                                    # Parse CSV for all regions at once
+                                    print(f"[INFO] Parsing CSV for all regions...")
+                                    dispatch_results = parse_dispatch_csv(csv_path, expected_settlement_date, regions=NEM_REGIONS)
+                                    
+                                    # Store results in a module-level variable for all regions to use
+                                    if not hasattr(sync_price_data_to_mongodb, '_dispatch_cache'):
+                                        sync_price_data_to_mongodb._dispatch_cache = {}
+                                    sync_price_data_to_mongodb._dispatch_cache = {
+                                        'source_file': dispatch_filename,
+                                        'settlement_timestamp': settlement_timestamp,
+                                        'expected_settlement_date': expected_settlement_date,
+                                        'results': dispatch_results,
+                                        'fetched_at': datetime.now(AEST).isoformat()
+                                    }
+                                    print(f"[OK] Extracted dispatch data for {len(dispatch_results)} regions")
                                 else:
-                                    continue
-                                
-                                # Ensure timezone-aware
-                                if price_dt.tzinfo is None:
-                                    price_dt = AEST_FIXED.localize(price_dt.replace(tzinfo=None))
-                                
-                                # Convert to AEST for comparison
-                                if price_dt.tzinfo != AEST_FIXED:
-                                    price_dt = price_dt.astimezone(AEST_FIXED)
-                                
-                                # Convert cutoff and future_limit to AEST_FIXED for comparison
-                                cutoff_aest = cutoff_time.astimezone(AEST_FIXED) if cutoff_time.tzinfo else AEST_FIXED.localize(cutoff_time)
-                                future_aest = future_limit.astimezone(AEST_FIXED) if future_limit.tzinfo else AEST_FIXED.localize(future_limit)
-                                
-                                # Check if within our time window
-                                if cutoff_aest <= price_dt <= future_aest:
-                                    # Check if we already have this timestamp
-                                    if not any(p['timestamp'] == price['timestamp'] for p in all_historical_prices):
-                                        all_historical_prices.append(price)
-                                        if dispatch_entry.get('source_file'):
-                                            all_source_files.append(dispatch_entry['source_file'])
-                            except Exception as e:
-                                # Skip problematic entries
-                                continue
+                                    print("[ERROR] No CSV file found in ZIP")
+                                    errors.append("No CSV file found in dispatch ZIP")
+                            finally:
+                                temp_dir.cleanup()
+                        else:
+                            print("[ERROR] Failed to download/extract dispatch ZIP")
+                            errors.append("Failed to download/extract dispatch ZIP")
             
-            # Sort by timestamp
-            all_historical_prices.sort(key=lambda x: x['timestamp'])
-            
-            if all_historical_prices:
-                # Create combined dispatch data structure
+            # Get dispatch data from cache (set by first region)
+            dispatch_cache = getattr(sync_price_data_to_mongodb, '_dispatch_cache', None)
+            if dispatch_cache and region in dispatch_cache['results']:
+                region_data = dispatch_cache['results'][region]
+                all_historical_prices = [{
+                    'timestamp': region_data['timestamp'],
+                    'price': region_data['price']
+                }]
+                
                 dispatch_data = {
                     'region': region,
-                    'data_date': latest_dispatch.get('data_date', '') if latest_dispatch else '',
-                    'timezone': latest_dispatch.get('timezone', 'AEST') if latest_dispatch else 'AEST',
-                    'source_file': ', '.join(sorted(set(all_source_files))) if all_source_files else '',
-                    'fetched_at': datetime.now(AEST).isoformat(),
-                    'hours_back': 1,
+                    'data_date': region_data['timestamp'],
+                    'timezone': datetime.now(AEST).tzname(),
+                    'source_file': dispatch_cache['source_file'],
+                    'fetched_at': dispatch_cache['fetched_at'],
                     'data_type': 'dispatch_historical',
                     'prices': all_historical_prices
                 }
                 data_sources['historical'] = dispatch_data
-                print(f"[OK] Fetched {len(all_historical_prices)} historical price points (target: 12 for 1 hour)")
+                print(f"[OK] Historical price for {region}: RRP = {region_data['price']:.2f} at {region_data['timestamp']}")
             else:
-                print(f"[WARNING] No historical data for {region}")
+                print(f"[WARNING] No historical dispatch data for {region}")
         except Exception as e:
             print(f"[ERROR] Failed to fetch historical data for {region}: {e}")
             import traceback
@@ -356,25 +363,104 @@ def sync_price_data_to_mongodb(force_refresh: bool = False):
         price_map = {}  # timestamp -> {historical, p5min, predispatch, source_files}
         
         # Process historical data
+        # CRITICAL: Only store as historical_price if:
+        # 1. Source file is from DISPATCH reports (PUBLIC_DISPATCH_*), NOT predispatch or p5min
+        # 2. Timestamp is actually in the past
+        now_aest = datetime.now(AEST)
+        
         if 'historical' in data_sources:
             source_file = data_sources['historical'].get('source_file', '')
-            source_timestamp = parse_timestamp_from_filename(source_file) or data_sources['historical'].get('data_date', '')
             
-            for price_point in data_sources['historical'].get('prices', []):
-                ts = price_point['timestamp']
-                if ts not in price_map:
-                    price_map[ts] = {
-                        'historical': None,
-                        'p5min': None,
-                        'predispatch': None,
-                        'source_files': {}
+            # VALIDATION: Only allow dispatch report files to write to historical_price
+            # Reject predispatch and p5min files
+            if source_file:
+                source_upper = source_file.upper()
+                if 'PUBLIC_PREDISPATCH' in source_upper or 'PUBLIC_P5MIN' in source_upper or 'P5MIN' in source_upper or 'PREDISPATCH' in source_upper:
+                    print(f"[WARNING] REJECTED: Source file '{source_file}' is from predispatch/p5min, not dispatch. "
+                          f"Skipping historical_price update to prevent predispatch data in historical_price field.")
+                    # Remove historical from data_sources to prevent it from being processed
+                    del data_sources['historical']
+                elif 'PUBLIC_DISPATCH' not in source_upper:
+                    print(f"[WARNING] REJECTED: Source file '{source_file}' is not a recognized dispatch file. "
+                          f"Skipping historical_price update.")
+                    del data_sources['historical']
+            
+            # Only proceed if we still have historical data after validation
+            if 'historical' in data_sources:
+                # Try both parse functions (dispatch timestamp parser and regular parser)
+                source_timestamp = parse_dispatch_timestamp(source_file)
+                if source_timestamp:
+                    source_timestamp = source_timestamp.strftime('%Y%m%d%H%M')
+                else:
+                    source_timestamp = parse_timestamp_from_filename(source_file) or data_sources['historical'].get('data_date', '')
+                
+                # Parse file timestamp for validation
+                file_dt = None
+                if source_timestamp and len(source_timestamp) >= 12:
+                    try:
+                        # Parse file timestamp: YYYYMMDDHHMM
+                        year = int(source_timestamp[0:4])
+                        month = int(source_timestamp[4:6])
+                        day = int(source_timestamp[6:8])
+                        hour = int(source_timestamp[8:10])
+                        minute = int(source_timestamp[10:12])
+                        file_dt = AEST_FIXED.localize(datetime(year, month, day, hour, minute))
+                    except Exception as e:
+                        print(f"[WARNING] Could not parse file timestamp {source_timestamp}: {e}")
+                
+                for price_point in data_sources['historical'].get('prices', []):
+                    ts = price_point['timestamp']
+                    
+                    # Check if timestamp is actually in the past before storing as historical
+                    try:
+                        # Parse timestamp
+                        if isinstance(ts, str):
+                            price_dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                        else:
+                            price_dt = ts
+                        
+                        # Convert to AEST for comparison
+                        if price_dt.tzinfo is None:
+                            price_dt = AEST_FIXED.localize(price_dt)
+                        elif price_dt.tzinfo != AEST_FIXED:
+                            price_dt = price_dt.astimezone(AEST_FIXED)
+                        
+                        # Validate: settlement timestamp should be at or before file timestamp
+                        # Dispatch files are published AFTER settlement, so settlement should be <= file time
+                        if file_dt:
+                            # Settlement should be at or before file time (allow 5 minute tolerance for edge cases)
+                            time_diff = (price_dt - file_dt).total_seconds() / 60  # difference in minutes
+                            if time_diff > 5:
+                                print(f"[WARNING] Skipping price with timestamp {ts} - settlement time ({price_dt.strftime('%Y-%m-%d %H:%M')}) is {time_diff:.1f} minutes after file time ({file_dt.strftime('%Y-%m-%d %H:%M')}). Dispatch files should contain past settlement data.")
+                                continue
+                        
+                        # Convert now_aest to AEST_FIXED for comparison
+                        now_aest_fixed = now_aest.astimezone(AEST_FIXED) if now_aest.tzinfo else AEST_FIXED.localize(now_aest)
+                        
+                        # Only store as historical if timestamp is in the past
+                        is_historical = price_dt < now_aest_fixed
+                        
+                        if not is_historical:
+                            # Skip future timestamps - don't store as historical_price
+                            continue
+                    except Exception as e:
+                        # If we can't parse the timestamp, skip it
+                        print(f"[WARNING] Could not parse timestamp {ts} for historical check: {e}")
+                        continue
+                    
+                    if ts not in price_map:
+                        price_map[ts] = {
+                            'historical': None,
+                            'p5min': None,
+                            'predispatch': None,
+                            'source_files': {}
+                        }
+                    price_map[ts]['historical'] = price_point['price']
+                    price_map[ts]['source_files']['historical'] = {
+                        'source_file': source_file,
+                        'file_timestamp': source_timestamp,
+                        'fetched_at': data_sources['historical'].get('fetched_at', '')
                     }
-                price_map[ts]['historical'] = price_point['price']
-                price_map[ts]['source_files']['historical'] = {
-                    'source_file': source_file,
-                    'file_timestamp': source_timestamp,
-                    'fetched_at': data_sources['historical'].get('fetched_at', '')
-                }
         
         # Process 5-minute data
         if 'p5min' in data_sources:
@@ -469,18 +555,113 @@ def sync_price_data_to_mongodb(force_refresh: bool = False):
                                     should_update_type = False
                         
                         if should_update_type:
-                            doc_updates[mongo_field] = {
-                                'price': price_data[our_type],
-                                'source_file': price_data['source_files'].get(our_type, {}).get('source_file', ''),
-                                'file_timestamp': new_file_ts,
-                                'fetched_at': price_data['source_files'].get(our_type, {}).get('fetched_at', '')
-                            }
+                            source_file_value = price_data['source_files'].get(our_type, {}).get('source_file', '')
+                            
+                            # CRITICAL: For historical_price, validate and clean source_file
+                            # Only allow dispatch files, reject predispatch/p5min files
+                            if mongo_field == 'historical_price' and source_file_value:
+                                # Check if source_file contains any predispatch/p5min files
+                                source_upper = source_file_value.upper()
+                                if 'PUBLIC_PREDISPATCH' in source_upper or 'PUBLIC_P5MIN' in source_upper or 'P5MIN' in source_upper or 'PREDISPATCH' in source_upper:
+                                    # If it's a comma-separated list, filter to only dispatch files
+                                    if ',' in source_file_value:
+                                        files = [f.strip() for f in source_file_value.split(',')]
+                                        dispatch_files = [f for f in files if 'PUBLIC_DISPATCH' in f.upper()]
+                                        if dispatch_files:
+                                            source_file_value = ', '.join(dispatch_files)
+                                        else:
+                                            # No dispatch files found - reject this update
+                                            print(f"[WARNING] REJECTED: historical_price source_file contains only predispatch/p5min files. Skipping update.")
+                                            source_file_value = None
+                                    else:
+                                        # Single file that's not dispatch - reject
+                                        print(f"[WARNING] REJECTED: historical_price source_file is not a dispatch file: {source_file_value}")
+                                        source_file_value = None
+                                elif 'PUBLIC_DISPATCH' not in source_upper:
+                                    # Not a recognized dispatch file - reject
+                                    print(f"[WARNING] REJECTED: historical_price source_file is not a recognized dispatch file: {source_file_value}")
+                                    source_file_value = None
+                            
+                            # Only create the update if source_file is valid (or None for non-historical fields)
+                            if mongo_field != 'historical_price' or source_file_value is not None:
+                                doc_updates[mongo_field] = {
+                                    'price': price_data[our_type],
+                                    'source_file': source_file_value if source_file_value else '',
+                                    'file_timestamp': new_file_ts,
+                                    'fetched_at': price_data['source_files'].get(our_type, {}).get('fetched_at', '')
+                                }
+                            else:
+                                # Rejected historical_price update - keep existing or set to None
+                                if existing_doc and mongo_field in existing_doc:
+                                    # Clean existing data if it has predispatch/p5min files
+                                    existing_source = existing_doc[mongo_field].get('source_file', '')
+                                    if existing_source and (',' in existing_source or 'PUBLIC_PREDISPATCH' in existing_source.upper() or 'PUBLIC_P5MIN' in existing_source.upper()):
+                                        # Clean up existing source_file
+                                        if ',' in existing_source:
+                                            files = [f.strip() for f in existing_source.split(',')]
+                                            dispatch_files = [f for f in files if 'PUBLIC_DISPATCH' in f.upper()]
+                                            if dispatch_files:
+                                                existing_doc[mongo_field]['source_file'] = ', '.join(dispatch_files)
+                                            else:
+                                                # No dispatch files - remove historical_price
+                                                doc_updates[mongo_field] = None
+                                                continue
+                                        else:
+                                            # Single file that's not dispatch - remove historical_price
+                                            doc_updates[mongo_field] = None
+                                            continue
+                                    doc_updates[mongo_field] = existing_doc[mongo_field]
+                                else:
+                                    doc_updates[mongo_field] = None
                         elif existing_doc and mongo_field in existing_doc:
-                            # Keep existing data if it's newer
+                            # Keep existing data if it's newer, but clean it if it's historical_price
+                            if mongo_field == 'historical_price':
+                                existing_source = existing_doc[mongo_field].get('source_file', '')
+                                if existing_source:
+                                    # Clean up existing source_file to remove predispatch/p5min files
+                                    if ',' in existing_source:
+                                        files = [f.strip() for f in existing_source.split(',')]
+                                        dispatch_files = [f for f in files if 'PUBLIC_DISPATCH' in f.upper()]
+                                        if dispatch_files:
+                                            existing_doc[mongo_field]['source_file'] = ', '.join(dispatch_files)
+                                        else:
+                                            # No dispatch files - remove historical_price
+                                            doc_updates[mongo_field] = None
+                                            continue
+                                    elif 'PUBLIC_PREDISPATCH' in existing_source.upper() or 'PUBLIC_P5MIN' in existing_source.upper():
+                                        # Single predispatch/p5min file - remove historical_price
+                                        doc_updates[mongo_field] = None
+                                        continue
                             doc_updates[mongo_field] = existing_doc[mongo_field]
                     elif existing_doc and mongo_field in existing_doc:
-                        # Keep existing data if we don't have new data
-                        doc_updates[mongo_field] = existing_doc[mongo_field]
+                        # Keep existing data if we don't have new data, but clean it if it's historical_price
+                        if mongo_field == 'historical_price':
+                            existing_source = existing_doc[mongo_field].get('source_file', '')
+                            if existing_source:
+                                # Clean up existing source_file to remove predispatch/p5min files
+                                if ',' in existing_source:
+                                    files = [f.strip() for f in existing_source.split(',')]
+                                    dispatch_files = [f for f in files if 'PUBLIC_DISPATCH' in f.upper()]
+                                    if dispatch_files:
+                                        # Create cleaned copy
+                                        cleaned_doc = existing_doc[mongo_field].copy()
+                                        cleaned_doc['source_file'] = ', '.join(dispatch_files)
+                                        doc_updates[mongo_field] = cleaned_doc
+                                    else:
+                                        # No dispatch files - remove historical_price
+                                        doc_updates[mongo_field] = None
+                                elif 'PUBLIC_PREDISPATCH' in existing_source.upper() or 'PUBLIC_P5MIN' in existing_source.upper():
+                                    # Single predispatch/p5min file - remove historical_price
+                                    doc_updates[mongo_field] = None
+                                else:
+                                    # Valid dispatch file - keep as is
+                                    doc_updates[mongo_field] = existing_doc[mongo_field]
+                            else:
+                                # No source_file - keep as is
+                                doc_updates[mongo_field] = existing_doc[mongo_field]
+                        else:
+                            # Not historical_price - keep as is
+                            doc_updates[mongo_field] = existing_doc[mongo_field]
                     else:
                         # No data available
                         doc_updates[mongo_field] = None
@@ -563,6 +744,19 @@ def main():
     import sys
     
     force_refresh = '--refresh' in sys.argv or '-r' in sys.argv
+    clear_db = '--clear' in sys.argv or '-c' in sys.argv
+    
+    # Clear database if requested
+    if clear_db:
+        print("\n[WARNING] Clearing MongoDB collection before re-syncing...")
+        if not clear_mongodb_collection():
+            print("[ERROR] Failed to clear collection. Aborting.")
+            sys.exit(1)
+        print("\n" + "=" * 80)
+        print("Starting fresh sync after clearing database...")
+        print("=" * 80 + "\n")
+        # Force refresh when clearing to ensure we get all fresh data
+        force_refresh = True
     
     success = sync_price_data_to_mongodb(force_refresh=force_refresh)
     
