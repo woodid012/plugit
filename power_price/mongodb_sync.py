@@ -19,10 +19,21 @@ except ImportError:
     from fetch_prices import fetch_p5min_prices, fetch_predispatch_prices, AEST
     from fetch_dispatch_historical import fetch_historical_dispatch_all_regions
 
+# Import MongoDB credentials from centralized config
+try:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from IoS_logins import MONGO_URI, MONGO_DB_NAME, MONGO_COLLECTION_NAME
+    DB_NAME = MONGO_DB_NAME
+    COLLECTION_NAME = MONGO_COLLECTION_NAME
+except ImportError:
+    # Fallback if IoS_logins.py not available
+    MONGO_URI = "mongodb+srv://NEMprice:test_smart123@cluster0.tm9wpue.mongodb.net/?appName=Cluster0"
+    DB_NAME = "nem_prices"
+    COLLECTION_NAME = "price_data"
+
 # Config
-MONGO_URI = "mongodb+srv://NEMprice:test_smart123@cluster0.tm9wpue.mongodb.net/?appName=Cluster0"
-DB_NAME = "nem_prices"
-COLLECTION_NAME = "price_data"
 REGIONS = ['VIC1', 'NSW1', 'QLD1', 'SA1', 'TAS1']
 
 
@@ -57,20 +68,25 @@ def create_price_record(price: float, source_file: str, fetched_at: str) -> Dict
 
 
 def get_best_price(doc: Dict) -> Optional[float]:
-    if doc.get('historical_price'):
-        return doc['historical_price']['price']
-    if doc.get('dispatch_5min'):
-        return doc['dispatch_5min']['price']
-    if doc.get('dispatch_30min'):
-        return doc['dispatch_30min']['price']
+    hist_price = doc.get('historical_price')
+    if hist_price and isinstance(hist_price, dict):
+        return hist_price.get('price')
+    dispatch_5min = doc.get('dispatch_5min')
+    if dispatch_5min and isinstance(dispatch_5min, dict):
+        return dispatch_5min.get('price')
+    dispatch_30min = doc.get('dispatch_30min')
+    if dispatch_30min and isinstance(dispatch_30min, dict):
+        return dispatch_30min.get('price')
     return None
 
 
 def get_forecast_price(doc: Dict) -> Optional[float]:
-    if doc.get('dispatch_5min'):
-        return doc['dispatch_5min']['price']
-    if doc.get('dispatch_30min'):
-        return doc['dispatch_30min']['price']
+    dispatch_5min = doc.get('dispatch_5min')
+    if dispatch_5min and isinstance(dispatch_5min, dict):
+        return dispatch_5min.get('price')
+    dispatch_30min = doc.get('dispatch_30min')
+    if dispatch_30min and isinstance(dispatch_30min, dict):
+        return dispatch_30min.get('price')
     return None
 
 
@@ -158,8 +174,9 @@ def sync_to_mongodb(force_refresh: bool = False) -> bool:
 
                     # Preserve existing real historical price
                     elif existing and existing.get('historical_price'):
-                        if is_dispatch_file(existing['historical_price'].get('source_file', '')):
-                            updates['historical_price'] = existing['historical_price']
+                        hist_price = existing['historical_price']
+                        if isinstance(hist_price, dict) and is_dispatch_file(hist_price.get('source_file', '')):
+                            updates['historical_price'] = hist_price
 
                     # P5MIN & PREDISPATCH: allow timestamp-based competition
                     for field in ['dispatch_5min', 'dispatch_30min']:
@@ -168,10 +185,12 @@ def sync_to_mongodb(force_refresh: bool = False) -> bool:
                             new_ts = new_entry['file_timestamp']
 
                             if existing and field in existing:
-                                old_ts = parse_file_timestamp(existing[field].get('source_file', '') or "")
-                                if old_ts and new_ts and new_ts <= old_ts:
-                                    updates[field] = existing[field]
-                                    continue
+                                existing_field = existing[field]
+                                if isinstance(existing_field, dict):
+                                    old_ts = parse_file_timestamp(existing_field.get('source_file', '') or "")
+                                    if old_ts and new_ts and new_ts <= old_ts:
+                                        updates[field] = existing_field
+                                        continue
                             updates[field] = new_entry
 
                     # Final prices
