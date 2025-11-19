@@ -19,34 +19,48 @@ except ImportError:
     from fetch_prices import fetch_p5min_prices, fetch_predispatch_prices, AEST
     from fetch_dispatch_historical import fetch_historical_dispatch_all_regions
 
-# Import MongoDB credentials from centralized config
+# Import MongoDB connection from centralized module
 try:
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from IoS_logins import MONGO_URI, MONGO_DB_NAME, MONGO_COLLECTION_NAME
-    DB_NAME = MONGO_DB_NAME
-    COLLECTION_NAME = MONGO_COLLECTION_NAME
+    from mongodb.connection import connect_mongo, DB_NAME, PRICE_COLLECTION_NAME
+    COLLECTION_NAME = PRICE_COLLECTION_NAME
 except ImportError:
-    # Fallback if IoS_logins.py not available
-    MONGO_URI = "mongodb+srv://NEMprice:test_smart123@cluster0.tm9wpue.mongodb.net/?appName=Cluster0"
-    DB_NAME = "nem_prices"
-    COLLECTION_NAME = "price_data"
+    # Fallback if mongodb module not available
+    try:
+        from IoS_logins import MONGO_URI, MONGO_DB_NAME, MONGO_COLLECTION_NAME
+        DB_NAME = MONGO_DB_NAME
+        COLLECTION_NAME = MONGO_COLLECTION_NAME
+        from pymongo import MongoClient
+        from pymongo.server_api import ServerApi
+        def connect_mongo():
+            try:
+                client = MongoClient(MONGO_URI, server_api=ServerApi('1'))
+                client.admin.command('ping')
+                print("[OK] Connected to MongoDB")
+                return client
+            except Exception as e:
+                print(f"[ERROR] MongoDB connection failed: {e}")
+                return None
+    except ImportError:
+        MONGO_URI = "mongodb+srv://NEMprice:test_smart123@cluster0.tm9wpue.mongodb.net/?appName=Cluster0"
+        DB_NAME = "nem_prices"
+        COLLECTION_NAME = "price_data"
+        from pymongo import MongoClient
+        from pymongo.server_api import ServerApi
+        def connect_mongo():
+            try:
+                client = MongoClient(MONGO_URI, server_api=ServerApi('1'))
+                client.admin.command('ping')
+                print("[OK] Connected to MongoDB")
+                return client
+            except Exception as e:
+                print(f"[ERROR] MongoDB connection failed: {e}")
+                return None
 
 # Config
 REGIONS = ['VIC1', 'NSW1', 'QLD1', 'SA1', 'TAS1']
-
-
-# Helpers
-def connect_mongo() -> Optional[MongoClient]:
-    try:
-        client = MongoClient(MONGO_URI, server_api=ServerApi('1'))
-        client.admin.command('ping')
-        print("[OK] Connected to MongoDB")
-        return client
-    except Exception as e:
-        print(f"[ERROR] MongoDB connection failed: {e}")
-        return None
 
 
 def is_dispatch_file(filename: str) -> bool:
@@ -80,80 +94,101 @@ def get_forecast_price(doc: Dict) -> Optional[float]:
     return None
 
 
-def cleanup_old_forecasts(client: MongoClient, max_age_hours: int = 2) -> Dict[str, int]:
+def parse_document_timestamp(timestamp_str) -> Optional[datetime]:
+    """Parse a document timestamp string or datetime object into AEST datetime."""
+    if not timestamp_str:
+        return None
+    
+    # Parse timestamp if it's a string
+    if isinstance(timestamp_str, str):
+        try:
+            # Handle ISO format timestamps
+            if '+' in timestamp_str or timestamp_str.endswith('Z'):
+                # Parse ISO format
+                if timestamp_str.endswith('Z'):
+                    timestamp_str = timestamp_str[:-1] + '+00:00'
+                doc_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                # Convert to AEST if needed
+                if doc_time.tzinfo is None:
+                    doc_time = AEST.localize(doc_time)
+                else:
+                    doc_time = doc_time.astimezone(AEST)
+            else:
+                # Try parsing as ISO without timezone
+                doc_time = datetime.fromisoformat(timestamp_str)
+                if doc_time.tzinfo is None:
+                    doc_time = AEST.localize(doc_time)
+            return doc_time
+        except (ValueError, AttributeError):
+            return None
+    else:
+        # Already a datetime object
+        doc_time = timestamp_str
+        if doc_time.tzinfo is None:
+            doc_time = AEST.localize(doc_time)
+        else:
+            doc_time = doc_time.astimezone(AEST)
+        return doc_time
+
+
+def cleanup_old_forecasts(client: MongoClient, forecast_max_age_hours: int = 2, historical_max_age_hours: int = 48) -> Dict[str, int]:
     """
-    Remove forecast data (dispatch_5min and dispatch_30min) older than max_age_hours.
-    Preserves historical_price data indefinitely.
+    Remove forecast data (dispatch_5min and dispatch_30min) older than forecast_max_age_hours,
+    and delete entire documents (including historical_price) older than historical_max_age_hours.
     
     Args:
         client: MongoDB client
-        max_age_hours: Maximum age in hours for forecast data (default: 2)
+        forecast_max_age_hours: Maximum age in hours for forecast data (default: 2)
+        historical_max_age_hours: Maximum age in hours for historical data (default: 48)
     
     Returns:
-        Dictionary with cleanup statistics: {'removed_5min': int, 'removed_30min': int, 'documents_updated': int}
+        Dictionary with cleanup statistics: {
+            'removed_5min': int, 
+            'removed_30min': int, 
+            'documents_updated': int,
+            'documents_deleted': int
+        }
     """
     db = client[DB_NAME]
     coll = db[COLLECTION_NAME]
     
-    cutoff_time = datetime.now(AEST) - timedelta(hours=max_age_hours)
-    cutoff_iso = cutoff_time.isoformat()
+    forecast_cutoff_time = datetime.now(AEST) - timedelta(hours=forecast_max_age_hours)
+    historical_cutoff_time = datetime.now(AEST) - timedelta(hours=historical_max_age_hours)
+    forecast_cutoff_iso = forecast_cutoff_time.isoformat()
+    historical_cutoff_iso = historical_cutoff_time.isoformat()
     
     stats = {
         'removed_5min': 0,
         'removed_30min': 0,
-        'documents_updated': 0
+        'documents_updated': 0,
+        'documents_deleted': 0
     }
     
-    print(f"\n[CLEANUP] Removing forecast data older than {max_age_hours} hours (before {cutoff_iso})...")
+    print(f"\n[CLEANUP] Removing forecast data older than {forecast_max_age_hours} hours (before {forecast_cutoff_iso})...")
+    print(f"[CLEANUP] Deleting historical data older than {historical_max_age_hours} hours (before {historical_cutoff_iso})...")
     
-    # Find all documents that might have old forecast data
-    # We need to check each document's timestamp against the cutoff
-    query = {
-        '$or': [
-            {'dispatch_5min': {'$exists': True}},
-            {'dispatch_30min': {'$exists': True}}
-        ]
-    }
-    
-    documents = coll.find(query)
+    # Get all documents to check their timestamps
+    all_documents = coll.find({})
     updated_count = 0
+    deleted_count = 0
+    documents_to_delete = []
     
-    for doc in documents:
+    for doc in all_documents:
         timestamp_str = doc.get('timestamp')
-        if not timestamp_str:
+        doc_time = parse_document_timestamp(timestamp_str)
+        
+        if doc_time is None:
             continue
         
-        # Parse timestamp if it's a string
-        if isinstance(timestamp_str, str):
-            try:
-                # Handle ISO format timestamps
-                if '+' in timestamp_str or timestamp_str.endswith('Z'):
-                    # Parse ISO format
-                    if timestamp_str.endswith('Z'):
-                        timestamp_str = timestamp_str[:-1] + '+00:00'
-                    doc_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                    # Convert to AEST if needed
-                    if doc_time.tzinfo is None:
-                        doc_time = AEST.localize(doc_time)
-                    else:
-                        doc_time = doc_time.astimezone(AEST)
-                else:
-                    # Try parsing as ISO without timezone
-                    doc_time = datetime.fromisoformat(timestamp_str)
-                    if doc_time.tzinfo is None:
-                        doc_time = AEST.localize(doc_time)
-            except (ValueError, AttributeError):
-                continue
-        else:
-            # Already a datetime object
-            doc_time = timestamp_str
-            if doc_time.tzinfo is None:
-                doc_time = AEST.localize(doc_time)
-            else:
-                doc_time = doc_time.astimezone(AEST)
+        # If document is older than historical cutoff, mark for deletion
+        if doc_time < historical_cutoff_time:
+            documents_to_delete.append(doc['_id'])
+            deleted_count += 1
+            continue
         
-        # Check if this document's timestamp is older than cutoff
-        if doc_time < cutoff_time:
+        # If document is older than forecast cutoff but newer than historical cutoff,
+        # remove forecast data but keep historical_price
+        if doc_time < forecast_cutoff_time:
             update_fields = {}
             
             # Remove dispatch_5min if it exists
@@ -188,10 +223,17 @@ def cleanup_old_forecasts(client: MongoClient, max_age_hours: int = 2) -> Dict[s
                 if result.modified_count > 0:
                     updated_count += 1
     
+    # Delete old documents in batch
+    if documents_to_delete:
+        delete_result = coll.delete_many({'_id': {'$in': documents_to_delete}})
+        deleted_count = delete_result.deleted_count
+    
     stats['documents_updated'] = updated_count
+    stats['documents_deleted'] = deleted_count
     print(f"[CLEANUP] Removed {stats['removed_5min']} dispatch_5min entries")
     print(f"[CLEANUP] Removed {stats['removed_30min']} dispatch_30min entries")
-    print(f"[CLEANUP] Updated {updated_count} documents")
+    print(f"[CLEANUP] Updated {updated_count} documents (removed forecast data)")
+    print(f"[CLEANUP] Deleted {deleted_count} documents (older than {historical_max_age_hours} hours)")
     
     return stats
 
@@ -305,6 +347,9 @@ def sync_historical_only(hours_back: int = 1, force_refresh: bool = False) -> bo
             print(f"  [FATAL] Region {region} failed: {e}")
             errors.append(f"Region {region}: {e}")
 
+    # Cleanup old forecast data (older than 2 hours) and historical data (older than 48 hours)
+    cleanup_stats = cleanup_old_forecasts(client, forecast_max_age_hours=2, historical_max_age_hours=48)
+
     # Summary
     print("="*80)
     print("HISTORICAL SYNC COMPLETE")
@@ -313,6 +358,7 @@ def sync_historical_only(hours_back: int = 1, force_refresh: bool = False) -> bo
     print(f"Updated  : {total_updated}")
     print(f"Skipped  : {total_skipped}")
     print(f"Errors   : {len(errors)}")
+    print(f"Cleanup  : {cleanup_stats['documents_updated']} documents updated, {cleanup_stats['documents_deleted']} documents deleted")
     if errors:
         print("\nFirst 10 errors:")
         for e in errors[:10]:
@@ -453,8 +499,8 @@ def sync_to_mongodb(force_refresh: bool = False) -> bool:
             print(f"  [FATAL] Region {region} failed: {e}")
             errors.append(f"Region {region}: {e}")
 
-    # Cleanup old forecast data (older than 2 hours)
-    cleanup_stats = cleanup_old_forecasts(client, max_age_hours=2)
+    # Cleanup old forecast data (older than 2 hours) and historical data (older than 48 hours)
+    cleanup_stats = cleanup_old_forecasts(client, forecast_max_age_hours=2, historical_max_age_hours=48)
 
     # Summary
     print("="*80)
@@ -464,7 +510,7 @@ def sync_to_mongodb(force_refresh: bool = False) -> bool:
     print(f"Updated  : {total_updated}")
     print(f"Skipped  : {total_skipped}")
     print(f"Errors   : {len(errors)}")
-    print(f"Cleanup  : {cleanup_stats['documents_updated']} documents updated")
+    print(f"Cleanup  : {cleanup_stats['documents_updated']} documents updated, {cleanup_stats['documents_deleted']} documents deleted")
     if errors:
         print("\nFirst 10 errors:")
         for e in errors[:10]:
@@ -480,9 +526,11 @@ def main():
     clear = any(arg in sys.argv for arg in ['--clear', '-c'])
 
     if clear:
-        if connect_mongo():
-            client = MongoClient(MONGO_URI, server_api=ServerApi('1'))
-            client[DB_NAME][COLLECTION_NAME].delete_many({})
+        client = connect_mongo()
+        if client:
+            db = client[DB_NAME]
+            collection = db[COLLECTION_NAME]
+            collection.delete_many({})
             client.close()
             print("[OK] Collection cleared")
         force = True

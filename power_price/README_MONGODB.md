@@ -10,7 +10,7 @@ The `mongodb_sync.py` script:
 - Stores data in MongoDB with priority-based `Export_Price` field
 - Uses latest file timestamps to determine if updates are needed
 - Overwrites existing data if newer files are available
-- **Automatically cleans up forecast data older than 2 hours** (keeps historical dispatch data indefinitely)
+- **Automatically cleans up forecast data older than 2 hours** and **deletes historical data older than 48 hours**
 
 ## Data Priority
 
@@ -23,11 +23,14 @@ If a higher priority source exists, it's used; otherwise, the next available sou
 
 ## Data Retention Policy
 
-- **Historical Dispatch Data**: Stored indefinitely - all historical settlement prices are kept
+- **Historical Dispatch Data**: Only last 48 hours are kept - older historical data is automatically deleted
 - **5-Minute Forecast Data**: Only last 2 hours are kept - older forecast data is automatically removed
 - **30-Minute Forecast Data**: Only last 2 hours are kept - older forecast data is automatically removed
 
-The cleanup process runs automatically after each sync operation. Only the `dispatch_5min` and `dispatch_30min` fields are removed from documents older than 2 hours; the `historical_price` field is always preserved.
+The cleanup process runs automatically after each sync operation:
+- Documents older than 48 hours are completely deleted (including `historical_price`)
+- Documents between 2-48 hours old have forecast fields (`dispatch_5min`, `dispatch_30min`, `Forecast_Price`) removed but keep `historical_price`
+- Documents newer than 2 hours keep all data
 
 ## MongoDB Structure
 
@@ -205,5 +208,6 @@ The script provides detailed console output:
 - Timezone handling uses `Australia/Sydney` (AEST/AEDT)
 - File timestamps are extracted from NEMweb filenames
 - Forecast data cleanup runs automatically after each sync
-- Historical dispatch data is never deleted, only forecast fields are cleaned up
+- Historical dispatch data older than 48 hours is automatically deleted
+- Documents between 2-48 hours old have forecast fields removed but keep historical_price
 
