@@ -1,12 +1,16 @@
 # Smart Home Device Control Suite
 
-Centralized control for Tapo and Meross smart home devices using Python.
+Centralized control for Tapo, Meross, Arlec, and Matter smart home devices using Python.
 
 ## Overview
 
 This project provides Python scripts to control:
 - **Tapo** smart plugs (local WiFi control - supports P100, P110, and other models)
 - **Meross** smart devices (cloud-based control)
+- **Arlec** smart plugs (Tuya protocol - local and cloud control)
+- **Matter** smart devices (Matter protocol - local control with cloud upload capability)
+
+Plus integration with **NEMweb** for real-time electricity price data.
 
 All credentials are stored in a centralized `IoS_logins.py` file for easy management.
 
@@ -19,22 +23,55 @@ plug/
 ├── README.md              # This file
 ├── requirements.txt       # Python dependencies for web server
 │
-├── server.py              # 🌐 Flask web server
+├── server.py              # 🌐 Flask web server (main entry point)
 ├── index.html             # 🌐 Web interface
 ├── start_server.bat       # 🌐 Quick start script
 │
-├── Tapo/                 # Tapo device control (P100, P110, etc.)
-│   ├── tapo_test.py      # Quick connectivity test
-│   ├── tapo_controller.py # Interactive controller
-│   ├── scan_network.py   # Network scanner
-│   └── README.md         # Tapo documentation
+├── Tapo/                  # Tapo device control (P100, P110, etc.)
+│   ├── README.md          # Tapo documentation
+│   ├── requirements.txt   # Tapo dependencies
+│   └── _tools/           # Standalone CLI utilities
+│       ├── tapo_controller.py
+│       ├── tapo_test.py
+│       ├── scan_network.py
+│       └── find_tapo.py
 │
-└── Meross/               # Meross device control
-    ├── discover_devices.py  # Device discovery
-    ├── meross_test.py      # Quick connectivity test
-    ├── meross_controller.py # Interactive controller
-    ├── quick_demo.py       # Programmatic control demo
-    └── README.md           # Meross documentation
+├── Meross/                # Meross device control
+│   ├── README.md          # Meross documentation
+│   ├── requirements.txt   # Meross dependencies
+│   └── _tools/           # Standalone CLI utilities
+│       ├── meross_controller.py
+│       ├── meross_test.py
+│       └── discover_devices.py
+│
+├── Arlec/                 # Arlec device control (Tuya)
+│   ├── README.md          # Arlec documentation
+│   ├── requirements.txt   # Arlec dependencies
+│   └── _tools/           # Standalone CLI utilities
+│       ├── arlec_controller.py
+│       ├── arlec_cloud_controller.py
+│       ├── arlec_test.py
+│       └── [other utilities]
+│
+├── Matter/                # Matter device control
+│   ├── README.md          # Matter documentation
+│   ├── requirements.txt   # Matter dependencies
+│   ├── matter_controller.py  # Used by server.py
+│   └── _tools/           # Standalone utilities
+│       ├── matter_test.py
+│       ├── discover_matter.py
+│       └── configure_cloud.py
+│
+├── power_price/           # NEMweb price data fetcher
+│   ├── README.md          # Power price documentation
+│   ├── fetch_prices.py    # Main price fetcher (used by server.py)
+│   ├── nem_price_cache.json  # Price data cache
+│   └── __init__.py
+│
+└── _standalone/           # Standalone components (not integrated)
+    ├── power_price_api_server.py
+    ├── power_price_dashboard.html
+    └── [other standalone utilities]
 ```
 
 ## Quick Start
@@ -83,14 +120,24 @@ Features:
 
 For Tapo:
 ```bash
-cd "Tapo"
-python tapo_controller.py
+python Tapo/_tools/tapo_controller.py
 ```
 
 For Meross devices:
 ```bash
-cd Meross
-python meross_controller.py
+python Meross/_tools/meross_controller.py
+```
+
+For Arlec devices:
+```bash
+python Arlec/_tools/arlec_controller.py
+# or for cloud control:
+python Arlec/_tools/arlec_cloud_controller.py
+```
+
+For Matter devices:
+```bash
+python Matter/_tools/matter_test.py
 ```
 
 ## Your Connected Devices
@@ -120,25 +167,52 @@ python meross_controller.py
 ### Tapo Commands
 ```bash
 # Test connection
-python tapo_test.py
+python Tapo/_tools/tapo_test.py
 
 # Interactive control
-python tapo_controller.py
+python Tapo/_tools/tapo_controller.py
 
 # Find devices on network
-python scan_network.py
+python Tapo/_tools/scan_network.py
 ```
 
 ### Meross Commands
 ```bash
 # Discover all devices
-python discover_devices.py
+python Meross/_tools/discover_devices.py
 
 # Test connection
-python meross_test.py
+python Meross/_tools/meross_test.py
 
 # Interactive control
-python meross_controller.py
+python Meross/_tools/meross_controller.py
+```
+
+### Arlec Commands
+```bash
+# Test local connection
+python Arlec/_tools/arlec_test.py
+
+# Test cloud connection
+python Arlec/_tools/arlec_cloud_test.py
+
+# Interactive local control
+python Arlec/_tools/arlec_controller.py
+
+# Interactive cloud control
+python Arlec/_tools/arlec_cloud_controller.py
+```
+
+### Matter Commands
+```bash
+# Test connection
+python Matter/_tools/matter_test.py
+
+# Discover devices
+python Matter/_tools/discover_matter.py
+
+# Configure cloud upload
+python Matter/_tools/configure_cloud.py
 ```
 
 ## Security Notes
@@ -179,6 +253,20 @@ These files contain credentials and should NEVER be committed:
 For detailed information, see:
 - `Tapo/README.md` - Tapo-specific documentation
 - `Meross/README.md` - Meross-specific documentation
+- `Arlec/README.md` - Arlec-specific documentation
+- `Matter/README.md` - Matter-specific documentation
+- `power_price/README.md` - Power price data documentation
+- `_standalone/README.md` - Standalone components documentation
+
+## Project Organization
+
+- **Main System**: `server.py` and `index.html` provide the integrated web interface
+- **Device Modules**: Each device type (Tapo, Meross, Arlec, Matter) has its own directory with:
+  - `README.md` - Module documentation
+  - `requirements.txt` - Module dependencies
+  - `_tools/` - Standalone CLI utilities (not used by server.py)
+- **Standalone Components**: `_standalone/` contains independent utilities that can be run separately
+- **Power Price**: `power_price/` module is integrated into server.py for real-time price data
 
 ## Credits
 

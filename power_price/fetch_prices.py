@@ -42,7 +42,10 @@ PREDISPATCH_IRSR_URL = "https://nemweb.com.au/Reports/Current/Predispatch_IRSR/"
 CURRENT_DISPATCH_URL = "https://nemweb.com.au/Reports/Current/DispatchIS/"
 
 # Timezone definitions
-AEST = pytz.timezone('Australia/Sydney')  # This will handle AEST/AEDT automatically
+# NEMweb market timestamps are ALWAYS in AEST (UTC+10), regardless of DST
+# We need a fixed AEST timezone that doesn't change with daylight saving
+AEST_FIXED = pytz.FixedOffset(600)  # UTC+10:00 (AEST - Australian Eastern Standard Time)
+AEST = pytz.timezone('Australia/Sydney')  # For current time calculations (handles AEST/AEDT automatically)
 UTC = pytz.UTC
 
 # Cache directory (same as script directory)
@@ -355,8 +358,10 @@ def parse_price_csv(csv_path: str, region: str = 'VIC1', hours_ahead: int = 12, 
                             continue
 
                         # Parse datetime
+                        # NEMweb uses DD/MM/YYYY format, but also supports YYYY/MM/DD
                         dt = None
-                        for fmt in ['%Y/%m/%d %H:%M:%S', '%Y-%m-%d %H:%M:%S',
+                        for fmt in ['%d/%m/%Y %H:%M:%S', '%d/%m/%Y %H:%M',
+                                   '%Y/%m/%d %H:%M:%S', '%Y-%m-%d %H:%M:%S',
                                    '%Y/%m/%d %H:%M', '%Y-%m-%d %H:%M']:
                             try:
                                 dt = datetime.strptime(dt_str, fmt)
@@ -367,14 +372,17 @@ def parse_price_csv(csv_path: str, region: str = 'VIC1', hours_ahead: int = 12, 
                         if dt is None:
                             continue
 
-                        # Localize to Australian timezone (handles AEST/AEDT automatically)
-                        dt_local = AEST.localize(dt)
+                        # Localize to AEST (UTC+10) - NEMweb market timestamps are always in AEST
+                        # regardless of whether we're currently in daylight saving time
+                        dt_local = AEST_FIXED.localize(dt)
 
                         # Filter by time range
                         # Include data within the specified time window (past or future)
                         if hours_back > 0:
-                            # Historical mode: include data from past
-                            if dt_local < cutoff_past or dt_local > now_local:
+                            # Historical mode: include data from past, and allow up to 15 minutes in future
+                            # (dispatch data can be published slightly ahead of current time)
+                            future_tolerance = timedelta(minutes=15)
+                            if dt_local < cutoff_past or dt_local > (now_local + future_tolerance):
                                 continue
                         elif hours_ahead > 0:
                             # Future mode: include only future data
@@ -489,10 +497,16 @@ def parse_region_csv(csv_path: str, region: str = 'VIC1', table_name: str = 'DRE
                         # Filter by region
                         if row_region != region:
                             continue
+                        
+                        # Debug output for first few VIC1 rows
+                        if row_region == 'VIC1' and len(prices) < 3:
+                            print(f"[DEBUG] Found VIC1 row: timestamp={dt_str}, price={price_str}")
 
                         # Parse datetime
+                        # NEMweb uses DD/MM/YYYY format, but also supports YYYY/MM/DD
                         dt = None
-                        for fmt in ['%Y/%m/%d %H:%M:%S', '%Y-%m-%d %H:%M:%S',
+                        for fmt in ['%d/%m/%Y %H:%M:%S', '%d/%m/%Y %H:%M',
+                                   '%Y/%m/%d %H:%M:%S', '%Y-%m-%d %H:%M:%S',
                                    '%Y/%m/%d %H:%M', '%Y-%m-%d %H:%M']:
                             try:
                                 dt = datetime.strptime(dt_str, fmt)
@@ -503,14 +517,17 @@ def parse_region_csv(csv_path: str, region: str = 'VIC1', table_name: str = 'DRE
                         if dt is None:
                             continue
 
-                        # Localize to Australian timezone (handles AEST/AEDT automatically)
-                        dt_local = AEST.localize(dt)
+                        # Localize to AEST (UTC+10) - NEMweb market timestamps are always in AEST
+                        # regardless of whether we're currently in daylight saving time
+                        dt_local = AEST_FIXED.localize(dt)
 
                         # Filter by time range
                         # Include data within the specified time window (past or future)
                         if hours_back > 0:
-                            # Historical mode: include data from past
-                            if dt_local < cutoff_past or dt_local > now_local:
+                            # Historical mode: include data from past, and allow up to 15 minutes in future
+                            # (dispatch data can be published slightly ahead of current time)
+                            future_tolerance = timedelta(minutes=15)
+                            if dt_local < cutoff_past or dt_local > (now_local + future_tolerance):
                                 continue
                         elif hours_ahead > 0:
                             # Future mode: include only future data
@@ -672,11 +689,13 @@ def save_to_cache(data_type: str, timestamp_key: str, data: Dict):
 
     cache[data_type][timestamp_key] = data
 
-    # Keep only the most recent 10 entries per data type to prevent cache bloat
-    if len(cache[data_type]) > 10:
-        # Sort by timestamp key and keep the 10 most recent
+    # Keep only the most recent entries per data type to prevent cache bloat
+    # For dispatch, keep more entries (24 = 2 hours of 5-minute intervals) to allow building 1-hour historical windows
+    max_entries = 24 if data_type == 'dispatch' else 10
+    if len(cache[data_type]) > max_entries:
+        # Sort by timestamp key and keep the most recent entries
         sorted_keys = sorted(cache[data_type].keys(), reverse=True)
-        cache[data_type] = {k: cache[data_type][k] for k in sorted_keys[:10]}
+        cache[data_type] = {k: cache[data_type][k] for k in sorted_keys[:max_entries]}
 
     save_unified_cache(cache)
 
@@ -811,9 +830,11 @@ def fetch_p5min_prices(region: str = 'VIC1', hours_ahead: int = 1, force_refresh
     # Check cache - skip if we already have this timestamp and not forcing refresh
     cache_filename = f"p5min_{region.lower()}_{date_str}.json"
     if not force_refresh and date_str == current_timestamp:
-        # We already have this data
-        print(f"[INFO] Using cached data from {date_str}")
-        return cache['p5min'].get(date_str)
+        # Check if cached data exists and matches the requested region
+        cached_data = cache['p5min'].get(date_str)
+        if cached_data and cached_data.get('region') == region:
+            print(f"[INFO] Using cached data from {date_str} for {region}")
+            return cached_data
 
     # Pick a random User-Agent for download (helps with cache bypass)
     user_agent = random.choice([ua for ua in USER_AGENTS if ua is not None])
@@ -896,9 +917,11 @@ def fetch_predispatch_prices(region: str = 'VIC1', hours_ahead: int = 24, force_
     # Check cache - skip if we already have this timestamp and not forcing refresh
     cache_filename = f"predispatch_{region.lower()}_{date_str}.json"
     if not force_refresh and date_str == current_timestamp:
-        # We already have this data
-        print(f"[INFO] Using cached data from {date_str}")
-        return cache['predispatch'].get(date_str)
+        # Check if cached data exists and matches the requested region
+        cached_data = cache['predispatch'].get(date_str)
+        if cached_data and cached_data.get('region') == region:
+            print(f"[INFO] Using cached data from {date_str} for {region}")
+            return cached_data
 
     # Pick a random User-Agent for download (helps with cache bypass)
     user_agent = random.choice([ua for ua in USER_AGENTS if ua is not None])
@@ -981,9 +1004,11 @@ def fetch_dispatch_prices(region: str = 'VIC1', hours_back: int = 24, force_refr
     # Check cache - skip if we already have this timestamp and not forcing refresh
     cache_filename = f"dispatch_{region.lower()}_{date_str}.json"
     if not force_refresh and date_str == current_timestamp:
-        # We already have this data
-        print(f"[INFO] Using cached data from {date_str}")
-        return cache['dispatch'].get(date_str)
+        # Check if cached data exists and matches the requested region
+        cached_data = cache['dispatch'].get(date_str)
+        if cached_data and cached_data.get('region') == region:
+            print(f"[INFO] Using cached data from {date_str} for {region}")
+            return cached_data
 
     # Pick a random User-Agent for download (helps with cache bypass)
     user_agent = random.choice([ua for ua in USER_AGENTS if ua is not None])

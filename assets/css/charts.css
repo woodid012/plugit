@@ -1,0 +1,118 @@
+/* Chart Styles */
+
+.chart-container {
+    background: white;
+    padding: 25px;
+    border-radius: 15px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    margin-bottom: 25px;
+}
+
+.chart-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #f0f0f0;
+}
+
+.chart-totals {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.daily-total, .savings-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.total-label, .savings-label {
+    color: #666;
+    font-size: 0.9em;
+    font-weight: 500;
+}
+
+.total-value, .savings-value {
+    color: #333;
+    font-size: 1.1em;
+    font-weight: 600;
+}
+
+.total-value {
+    color: #667eea;
+}
+
+.savings-value {
+    color: #4CAF50;
+}
+
+.chart-icon {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    margin-right: 15px;
+    background: linear-gradient(135deg, #4facfe, #00f2fe);
+}
+
+.chart-title {
+    font-size: 1.8em;
+    color: #333;
+    font-weight: 600;
+}
+
+.chart-wrapper {
+    position: relative;
+    height: 300px;
+}
+
+/* Style chart legend to wrap forecast items to new line */
+.chart-wrapper canvas + div {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    justify-content: center;
+}
+
+/* Target Chart.js legend items containing "Forecast" */
+.chart-wrapper ul li {
+    position: relative;
+}
+
+/* Style forecast legend items to appear on new line */
+.chart-wrapper ul li.forecast-legend-item {
+    flex-basis: 100% !important;
+    width: 100% !important;
+    margin-top: 10px !important;
+    padding-top: 10px !important;
+    border-top: 1px solid #e0e0e0 !important;
+    clear: both;
+}
+
+.export-csv-btn {
+    margin-left: auto;
+    background: #4CAF50;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 0.9em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+    white-space: nowrap;
+}
+
+.export-csv-btn:hover {
+    background: #45a049;
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(76, 175, 80, 0.4);
+}
+

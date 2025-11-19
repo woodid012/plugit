@@ -1,0 +1,156 @@
+/* Device Card Styles */
+
+.devices-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 15px;
+}
+
+.device-card {
+    background: #f8f9fa;
+    border-radius: 12px;
+    padding: 20px;
+    transition: all 0.3s;
+    border: 2px solid transparent;
+}
+
+.device-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+}
+
+.device-card.online {
+    border-color: #4CAF50;
+}
+
+.device-card.offline {
+    border-color: #f44336;
+    opacity: 0.6;
+}
+
+.device-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.device-name {
+    font-size: 1.3em;
+    font-weight: 600;
+    color: #333;
+}
+
+.device-type-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 10px;
+    font-size: 0.7em;
+    font-weight: 600;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    letter-spacing: 0.5px;
+}
+
+.device-type-tapo {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+}
+
+.device-type-meross {
+    background: linear-gradient(135deg, #f093fb, #f5576c);
+    color: white;
+}
+
+.device-type-arlec {
+    background: linear-gradient(135deg, #fad961, #f76b1c);
+    color: white;
+}
+
+.device-type-matter {
+    background: linear-gradient(135deg, #4facfe, #00f2fe);
+    color: white;
+}
+
+.status-badge {
+    padding: 5px 12px;
+    border-radius: 15px;
+    font-size: 0.85em;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.status-on {
+    background: #4CAF50;
+    color: white;
+}
+
+.status-off {
+    background: #9e9e9e;
+    color: white;
+}
+
+.status-offline {
+    background: #f44336;
+    color: white;
+}
+
+.device-info {
+    color: #666;
+    font-size: 0.9em;
+    margin-bottom: 15px;
+}
+
+.device-controls {
+    display: flex;
+    gap: 10px;
+}
+
+.control-btn {
+    flex: 1;
+    padding: 12px;
+    border: none;
+    border-radius: 8px;
+    font-size: 1em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+    text-transform: uppercase;
+}
+
+.btn-on {
+    background: #4CAF50;
+    color: white;
+}
+
+.btn-on:hover {
+    background: #45a049;
+    transform: scale(1.05);
+}
+
+.btn-off {
+    background: #f44336;
+    color: white;
+}
+
+.btn-off:hover {
+    background: #da190b;
+    transform: scale(1.05);
+}
+
+.btn-toggle {
+    background: #2196F3;
+    color: white;
+}
+
+.btn-toggle:hover {
+    background: #0b7dda;
+    transform: scale(1.05);
+}
+
+.control-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+}
+

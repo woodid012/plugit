@@ -11,6 +11,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 import os
 import json
 from datetime import datetime, timedelta
+import time
 
 # Import credentials
 from IoS_logins import (
@@ -36,6 +37,9 @@ except ImportError:
 
 app = Flask(__name__)
 CORS(app)
+
+# Server start timestamp (used to detect restarts and clear browser cache)
+SERVER_START_TIME = time.time()
 
 # Global variables for Meross
 meross_manager = None
@@ -637,6 +641,21 @@ def index():
     """Serve the main HTML page"""
     return send_from_directory('.', 'index.html')
 
+@app.route('/assets/<path:filename>')
+def serve_assets(filename):
+    """Serve static files from assets directory"""
+    return send_from_directory('assets', filename)
+
+
+@app.route('/api/server/status', methods=['GET'])
+def get_server_status():
+    """Get server status including start time"""
+    return jsonify({
+        'success': True,
+        'server_start_time': SERVER_START_TIME,
+        'current_time': time.time()
+    })
+
 
 @app.route('/api/debug/tapo', methods=['GET'])
 def debug_tapo_devices():
@@ -1054,6 +1073,169 @@ def get_aemo_prices():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/nem/prices/latest', methods=['GET'])
+def get_nem_prices_latest():
+    """Get latest NEM price data from cache file"""
+    try:
+        import os
+        from pathlib import Path
+
+        # Path to NEM price cache file
+        cache_file = Path(__file__).parent / 'power_price' / 'nem_price_cache.json'
+
+        if not os.path.exists(cache_file):
+            return jsonify({
+                'success': False,
+                'error': 'NEM price cache file not found'
+            }), 404
+
+        # Load cache file
+        with open(cache_file, 'r') as f:
+            cache_data = json.load(f)
+
+        # Extract latest data from each type
+        result = {
+            'metadata': cache_data.get('metadata', {}),
+            'series': []
+        }
+
+        for data_type in ['dispatch', 'p5min', 'predispatch']:
+            if data_type in cache_data and cache_data[data_type]:
+                # Get the latest timestamp
+                latest_timestamp = max(cache_data[data_type].keys())
+                data = cache_data[data_type][latest_timestamp]
+
+                # Format prices for Chart.js
+                formatted_prices = []
+                for point in data.get('prices', []):
+                    formatted_prices.append({
+                        'x': point['timestamp'],
+                        'y': point['price']
+                    })
+
+                result['series'].append({
+                    'name': data_type,
+                    'data': formatted_prices,
+                    'label': {
+                        'dispatch': 'Dispatch (Actual)',
+                        'p5min': 'P5MIN (5-min Forecast)',
+                        'predispatch': 'Pre-dispatch (30min+ Forecast)'
+                    }.get(data_type, data_type)
+                })
+
+        return jsonify(result)
+
+    except Exception as e:
+        print(f"Error in get_nem_prices_latest: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/mongodb/prices', methods=['GET'])
+def get_mongodb_prices():
+    """Get Historical (Export_Price) and Forecast (Forecast_Price) data from MongoDB for a specific region and time range"""
+    try:
+        from pymongo.mongo_client import MongoClient
+        from pymongo.server_api import ServerApi
+        from pymongo.errors import ConnectionFailure
+        from datetime import datetime
+        import pytz
+        
+        # Get parameters
+        region = request.args.get('region', 'VIC1')
+        start_time = request.args.get('start_time')
+        end_time = request.args.get('end_time')
+        
+        # MongoDB connection details (same as mongodb_sync.py)
+        MONGO_USERNAME = "NEMprice"
+        MONGO_PASSWORD = "test_smart123"
+        MONGO_URI = f"mongodb+srv://{MONGO_USERNAME}:{MONGO_PASSWORD}@cluster0.tm9wpue.mongodb.net/?appName=Cluster0"
+        DB_NAME = "nem_prices"
+        COLLECTION_NAME = "price_data"
+        
+        # Connect to MongoDB
+        try:
+            client = MongoClient(MONGO_URI, server_api=ServerApi('1'))
+            client.admin.command('ping')
+        except ConnectionFailure as e:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to connect to MongoDB: {e}'
+            }), 500
+        
+        db = client[DB_NAME]
+        collection = db[COLLECTION_NAME]
+        
+        # Build query
+        query = {'region': region}
+        
+        # Add time range if provided
+        # MongoDB stores timestamps as ISO format strings, so we compare strings directly
+        if start_time and end_time:
+            try:
+                # Normalize timestamps to ISO format strings
+                # Remove 'Z' and ensure consistent format
+                start_iso = start_time.replace('Z', '+00:00')
+                end_iso = end_time.replace('Z', '+00:00')
+                
+                # MongoDB string comparison works correctly for ISO format timestamps
+                query['timestamp'] = {
+                    '$gte': start_iso,
+                    '$lte': end_iso
+                }
+            except Exception as e:
+                print(f"Error parsing time range: {e}")
+        
+        # Query MongoDB - sort by timestamp ascending
+        documents = collection.find(query).sort('timestamp', 1)
+        
+        # Format results - separate historical and forecast series
+        historical_prices = []
+        forecast_prices = []
+        
+        for doc in documents:
+            timestamp = doc.get('timestamp')
+            # Ensure timestamp is in ISO format
+            if isinstance(timestamp, str):
+                ts_str = timestamp
+            else:
+                ts_str = timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp)
+            
+            # Historical series (Export_Price)
+            export_price = doc.get('Export_Price')
+            if export_price is not None:
+                historical_prices.append({
+                    'x': ts_str,
+                    'y': float(export_price)
+                })
+            
+            # Forecast series (Forecast_Price)
+            forecast_price = doc.get('Forecast_Price')
+            if forecast_price is not None:
+                forecast_prices.append({
+                    'x': ts_str,
+                    'y': float(forecast_price)
+                })
+        
+        client.close()
+        
+        return jsonify({
+            'success': True,
+            'region': region,
+            'historical': historical_prices,
+            'forecast': forecast_prices,
+            'historical_count': len(historical_prices),
+            'forecast_count': len(forecast_prices)
+        })
+        
+    except Exception as e:
+        print(f"Error in get_mongodb_prices: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/cost', methods=['GET'])
 def get_cost_data():
     """Calculate cost based on power usage and price data - now handled client-side only"""
@@ -1070,6 +1252,19 @@ def start_meross_loop():
     meross_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(meross_loop)
     meross_loop.run_forever()
+
+
+def clear_legacy_cache():
+    """Clear legacy timeseries data cache on server restart"""
+    try:
+        legacy_cache_file = 'timeseries_data.json'
+        if os.path.exists(legacy_cache_file):
+            os.remove(legacy_cache_file)
+            print(f"[OK] Cleared legacy cache: {legacy_cache_file}")
+        else:
+            print(f"[INFO] No legacy cache to clear")
+    except Exception as e:
+        print(f"[WARNING] Failed to clear legacy cache: {e}")
 
 
 def run_async_init():
@@ -1097,6 +1292,10 @@ if __name__ == '__main__':
     print("=" * 60)
     print("Smart Home Control Server")
     print("=" * 60)
+
+    # Clear legacy timeseries cache on startup
+    print("\nClearing legacy cache...")
+    clear_legacy_cache()
 
     # Load dynamically added Tapo devices from file
     print("\nLoading Tapo devices from file...")

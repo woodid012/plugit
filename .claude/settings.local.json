@@ -13,7 +13,9 @@
       "Bash(timeout 2 sleep 2:*)",
       "Bash(nul)",
       "Bash(exit 0)",
-      "Bash(mv:*)"
+      "Bash(mv:*)",
+      "Bash(git push:*)",
+      "Bash(dir:*)"
     ],
     "deny": [],
     "ask": []
