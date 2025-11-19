@@ -1,5 +1,6 @@
 """
 Fetch actual dispatch price data from NEMWeb Dispatch Reports
+
 Scans the latest dispatch report, extracts RRP for regions (NSW1, VIC1, etc.),
 and stores as historical_price in MongoDB.
 
@@ -37,7 +38,6 @@ COLLECTION_NAME = "price_data"
 
 # Regions to extract (NSW1, VIC1, and others)
 REGIONS = ['NSW1', 'VIC1', 'QLD1', 'SA1', 'TAS1']
-
 
 def get_latest_dispatch_file() -> Optional[tuple]:
     """
@@ -99,7 +99,6 @@ def get_latest_dispatch_file() -> Optional[tuple]:
         traceback.print_exc()
         return None
 
-
 def parse_timestamp_from_filename(filename: str) -> Optional[datetime]:
     """
     Parse settlement timestamp from filename.
@@ -121,7 +120,6 @@ def parse_timestamp_from_filename(filename: str) -> Optional[datetime]:
             print(f"[WARNING] Could not parse timestamp from filename {filename}: {e}")
             return None
     return None
-
 
 def download_and_extract_zip(url: str) -> Optional[tempfile.TemporaryDirectory]:
     """Download ZIP file and extract to temporary directory"""
@@ -154,7 +152,6 @@ def download_and_extract_zip(url: str) -> Optional[tempfile.TemporaryDirectory]:
         traceback.print_exc()
         return None
 
-
 def find_csv_file(directory: str) -> Optional[str]:
     """Find the main CSV file in the extracted directory"""
     for root, dirs, files in os.walk(directory):
@@ -162,7 +159,6 @@ def find_csv_file(directory: str) -> Optional[str]:
             if file.endswith('.CSV') or file.endswith('.csv'):
                 return os.path.join(root, file)
     return None
-
 
 def parse_dispatch_csv(csv_path: str, expected_settlement_date: datetime, 
                        regions: List[str] = None) -> Dict[str, Dict]:
@@ -280,7 +276,6 @@ def parse_dispatch_csv(csv_path: str, expected_settlement_date: datetime,
         traceback.print_exc()
         return {}
 
-
 def connect_mongodb() -> Optional[MongoClient]:
     """Connect to MongoDB and return client"""
     try:
@@ -294,7 +289,6 @@ def connect_mongodb() -> Optional[MongoClient]:
     except Exception as e:
         print(f"[ERROR] MongoDB connection error: {e}")
         return None
-
 
 def store_to_mongodb(region: str, timestamp: str, price: float, source_file: str):
     """
@@ -413,6 +407,71 @@ def store_to_mongodb(region: str, timestamp: str, price: float, source_file: str
         client.close()
         return False
 
+def fetch_historical_dispatch_all_regions(
+    regions: List[str] = None,
+    hours_back: int = 8,
+    force_refresh: bool = False
+) -> Dict[str, List[Dict]]:
+    """
+    Compatibility function for mongodb_sync.py
+    Fetches historical dispatch prices and returns in the format expected by mongodb_sync.py
+    Returns: {region: [{"timestamp": "...", "price": ..., "source_file": "...", "fetched_at": "..."}, ...]}
+    """
+    if regions is None:
+        regions = REGIONS
+    
+    # Get latest dispatch file
+    result = get_latest_dispatch_file()
+    if not result:
+        print("[ERROR] Could not find latest dispatch file")
+        return {}
+    
+    url, settlement_timestamp = result
+    source_filename = os.path.basename(url)
+    
+    # Parse expected settlement date from filename
+    expected_settlement_date = parse_timestamp_from_filename(source_filename)
+    if not expected_settlement_date:
+        print(f"[ERROR] Could not parse settlement date from filename: {source_filename}")
+        return {}
+    
+    # Download and extract
+    temp_dir = download_and_extract_zip(url)
+    if not temp_dir:
+        print("[ERROR] Failed to download/extract ZIP file")
+        return {}
+    
+    try:
+        # Find and parse CSV
+        csv_path = find_csv_file(temp_dir.name)
+        if not csv_path:
+            print("[ERROR] No CSV file found in ZIP")
+            return {}
+        
+        # Parse CSV
+        results = parse_dispatch_csv(csv_path, expected_settlement_date, regions=regions)
+        
+        if not results:
+            print("[WARNING] No price data extracted")
+            return {}
+        
+        # Convert to format expected by mongodb_sync.py
+        all_results: Dict[str, List[Dict]] = {r: [] for r in regions}
+        fetched_at = datetime.now(AEST).isoformat()
+        
+        for region, data in results.items():
+            point = {
+                'timestamp': data['timestamp'],
+                'price': data['price'],
+                'source_file': source_filename,
+                'fetched_at': fetched_at
+            }
+            all_results[region].append(point)
+        
+        return all_results
+        
+    finally:
+        temp_dir.cleanup()
 
 def main():
     """
@@ -504,8 +563,6 @@ def main():
         temp_dir.cleanup()
         print("[OK] Cleaned up temporary files")
 
-
 if __name__ == '__main__':
     success = main()
     exit(0 if success else 1)
-
