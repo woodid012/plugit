@@ -1,0 +1,43 @@
+name: Sync NEM Prices to MongoDB
+
+on:
+  schedule:
+    # Run every 5 minutes
+    - cron: '*/5 * * * *'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r power_price/requirements.txt
+      
+      - name: Sync to MongoDB
+        run: |
+          cd power_price
+          python mongodb_sync.py
+      
+      - name: Report status
+        if: always()
+        run: |
+          if [ ${{ job.status }} == 'success' ]; then
+            echo "✅ MongoDB sync completed successfully"
+          else
+            echo "❌ MongoDB sync failed"
+            exit 1
+          fi
+
