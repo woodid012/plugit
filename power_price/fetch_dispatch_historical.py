@@ -338,15 +338,11 @@ def store_to_mongodb(region: str, timestamp: str, price: float, source_file: str
             'fetched_at': now.isoformat()
         }
         
-        # Calculate Export_Price (use historical_price if available)
-        export_price = price
-        
         # Update document
         update_doc = {
             'region': region,
             'timestamp': timestamp,
             'historical_price': historical_price_data,
-            'Export_Price': export_price,
             'last_updated': now.isoformat()
         }
         
@@ -374,16 +370,6 @@ def store_to_mongodb(region: str, timestamp: str, price: float, source_file: str
                     elif 'PUBLIC_PREDISPATCH' in existing_source.upper() or 'PUBLIC_P5MIN' in existing_source.upper():
                         # Existing file is predispatch/p5min - we'll overwrite with dispatch file
                         pass
-            
-            # Recalculate Export_Price with priority: historical > dispatch_5min > dispatch_30min
-            if existing_doc.get('dispatch_5min') and isinstance(existing_doc['dispatch_5min'], dict):
-                if existing_doc['dispatch_5min'].get('price') is not None and price is None:
-                    export_price = existing_doc['dispatch_5min']['price']
-            elif existing_doc.get('dispatch_30min') and isinstance(existing_doc['dispatch_30min'], dict):
-                if existing_doc['dispatch_30min'].get('price') is not None and price is None:
-                    export_price = existing_doc['dispatch_30min']['price']
-            
-            update_doc['Export_Price'] = export_price
         
         # Upsert document
         result = collection.update_one(

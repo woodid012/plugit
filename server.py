@@ -7,7 +7,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 import asyncio
 from threading import Thread
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 import os
 import json
 from datetime import datetime, timedelta
@@ -18,7 +18,8 @@ from IoS_logins import (
     TAPO_EMAIL, TAPO_PASSWORD, 
     MEROSS_EMAIL, MEROSS_PASSWORD, 
     TUYA_ACCESS_ID, TUYA_ACCESS_SECRET, TUYA_API_REGION,
-    KNOWN_DEVICES, MATTER_DEVICES, get_all_matter_devices
+    KNOWN_DEVICES, MATTER_DEVICES, get_all_matter_devices,
+    MONGO_USERNAME, MONGO_PASSWORD, MONGO_URI, MONGO_DB_NAME, MONGO_COLLECTION_NAME
 )
 
 # Import device libraries
@@ -1147,12 +1148,9 @@ def get_mongodb_prices():
         start_time = request.args.get('start_time')
         end_time = request.args.get('end_time')
         
-        # MongoDB connection details (same as mongodb_sync.py)
-        MONGO_USERNAME = "NEMprice"
-        MONGO_PASSWORD = "test_smart123"
-        MONGO_URI = f"mongodb+srv://{MONGO_USERNAME}:{MONGO_PASSWORD}@cluster0.tm9wpue.mongodb.net/?appName=Cluster0"
-        DB_NAME = "nem_prices"
-        COLLECTION_NAME = "price_data"
+        # MongoDB connection details (from IoS_logins.py)
+        DB_NAME = MONGO_DB_NAME
+        COLLECTION_NAME = MONGO_COLLECTION_NAME
         
         # Connect to MongoDB
         try:
@@ -1304,7 +1302,6 @@ def run_async_init():
     meross_loop_thread.start()
 
     # Wait for loop to be ready
-    import time
     time.sleep(0.5)
 
     # Initialize Meross in that loop

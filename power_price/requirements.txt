@@ -5,3 +5,4 @@ matplotlib>=3.8.0
 flask>=3.0.0
 flask-cors>=4.0.0
 pymongo>=4.6.0
+schedule>=1.2.0

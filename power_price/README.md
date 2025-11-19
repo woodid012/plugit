@@ -154,3 +154,4 @@ Errors are logged to the console with `[ERROR]` or `[WARNING]` prefixes.
 Part of the Smart Home Device Control Suite project.
 
 
+

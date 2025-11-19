@@ -1,0 +1,119 @@
+name: Sync NEM Prices to MongoDB
+
+on:
+  schedule:
+    # Run every 5 minutes (full sync with forecasts)
+    - cron: '*/5 * * * *'
+    # Run every hour (historical-only, last 1 hour = 12 data points)
+    - cron: '0 * * * *'
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      sync_type:
+        description: 'Type of sync to run'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - full
+          - historical
+
+jobs:
+  determine-sync:
+    runs-on: ubuntu-latest
+    outputs:
+      run-full: ${{ steps.check.outputs.run-full }}
+      run-historical: ${{ steps.check.outputs.run-historical }}
+    steps:
+      - name: Determine which syncs to run
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            SYNC_TYPE="${{ github.event.inputs.sync_type }}"
+            if [ "$SYNC_TYPE" == "both" ] || [ "$SYNC_TYPE" == "full" ]; then
+              echo "run-full=true" >> $GITHUB_OUTPUT
+            fi
+            if [ "$SYNC_TYPE" == "both" ] || [ "$SYNC_TYPE" == "historical" ]; then
+              echo "run-historical=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            # Scheduled run - check current minute
+            MINUTE=$(date +%M)
+            if [ $((MINUTE % 5)) -eq 0 ]; then
+              echo "run-full=true" >> $GITHUB_OUTPUT
+            fi
+            if [ $MINUTE -eq 0 ]; then
+              echo "run-historical=true" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+  sync-full:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: determine-sync
+    if: needs.determine-sync.outputs.run-full == 'true'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r power_price/requirements.txt
+      
+      - name: Full Sync to MongoDB (with forecasts)
+        run: |
+          cd power_price
+          python -c "from mongodb_sync import sync_to_mongodb; sync_to_mongodb(force_refresh=False)"
+        env:
+          # MongoDB credentials should be in IoS_logins.py or environment variables
+          # If using environment variables, uncomment and set:
+          # MONGO_URI: ${{ secrets.MONGO_URI }}
+          # MONGO_DB_NAME: ${{ secrets.MONGO_DB_NAME }}
+          # MONGO_COLLECTION_NAME: ${{ secrets.MONGO_COLLECTION_NAME }}
+      
+      - name: Check sync result
+        if: failure()
+        run: |
+          echo "Full sync failed - check logs above"
+          exit 1
+
+  sync-historical:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: determine-sync
+    if: needs.determine-sync.outputs.run-historical == 'true'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r power_price/requirements.txt
+      
+      - name: Historical-Only Sync (last 1 hour = 12 data points)
+        run: |
+          cd power_price
+          python -c "from mongodb_sync import sync_historical_only; sync_historical_only(hours_back=1, force_refresh=False)"
+        env:
+          # MongoDB credentials should be in IoS_logins.py or environment variables
+      
+      - name: Check sync result
+        if: failure()
+        run: |
+          echo "Historical sync failed - check logs above"
+          exit 1
+

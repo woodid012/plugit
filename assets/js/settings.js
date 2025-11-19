@@ -72,9 +72,6 @@ function saveSettings(event) {
             if (typeof loadStandalonePriceChart === 'function') {
                 loadStandalonePriceChart();
             }
-            if (typeof loadVIC1DetailedPriceChart === 'function') {
-                loadVIC1DetailedPriceChart();
-            }
         } else {
             // Region didn't change, just reload cost data if needed
             if (typeof loadCostData === 'function') {

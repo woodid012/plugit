@@ -10,6 +10,7 @@ The `mongodb_sync.py` script:
 - Stores data in MongoDB with priority-based `Export_Price` field
 - Uses latest file timestamps to determine if updates are needed
 - Overwrites existing data if newer files are available
+- **Automatically cleans up forecast data older than 2 hours** (keeps historical dispatch data indefinitely)
 
 ## Data Priority
 
@@ -19,6 +20,14 @@ The `Export_Price` field uses the following priority order:
 3. **Dispatch 30 Minute** (predispatch) - Longer-term 30-minute forecasts
 
 If a higher priority source exists, it's used; otherwise, the next available source is used.
+
+## Data Retention Policy
+
+- **Historical Dispatch Data**: Stored indefinitely - all historical settlement prices are kept
+- **5-Minute Forecast Data**: Only last 2 hours are kept - older forecast data is automatically removed
+- **30-Minute Forecast Data**: Only last 2 hours are kept - older forecast data is automatically removed
+
+The cleanup process runs automatically after each sync operation. Only the `dispatch_5min` and `dispatch_30min` fields are removed from documents older than 2 hours; the `historical_price` field is always preserved.
 
 ## MongoDB Structure
 
@@ -94,46 +103,75 @@ The script implements smart update logic:
    - If new file timestamp < existing file timestamp → Skip (preserve newer data)
 4. **Per-Timestamp Updates**: Each price timestamp is checked individually
 
-## GitHub Actions Automation
+## Automated Scraping
 
-To run every 30 minutes using GitHub Actions, create `.github/workflows/sync-prices.yml`:
+The system supports two methods for automated scraping:
 
-```yaml
-name: Sync NEM Prices to MongoDB
+### Option 1: GitHub Actions (Cloud-Based)
 
-on:
-  schedule:
-    - cron: '*/30 * * * *'  # Every 30 minutes
-  workflow_dispatch:  # Allow manual trigger
+A GitHub Actions workflow is already configured at `.github/workflows/sync-nem-prices.yml` that runs every 5 minutes.
 
-jobs:
-  sync:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-      
-      - name: Install dependencies
-        run: |
-          pip install -r power_price/requirements.txt
-      
-      - name: Sync to MongoDB
-        run: |
-          python power_price/mongodb_sync.py
-        env:
-          # Add any required environment variables here
-```
+**Setup:**
+1. Push the workflow file to your GitHub repository
+2. The workflow will automatically run every 5 minutes
+3. MongoDB credentials are read from `IoS_logins.py` (or set as GitHub Secrets if preferred)
+
+**Manual Trigger:**
+- Go to Actions tab in GitHub
+- Select "Sync NEM Prices to MongoDB"
+- Click "Run workflow"
+
+**Note:** For private repositories, GitHub Actions has limited free minutes per month. For frequent runs (every 5 minutes), consider using the local scheduler option below.
+
+### Option 2: Python Scheduler (Local)
+
+For local automation, use the `auto_sync.py` script that runs continuously on your machine.
+
+**Setup:**
+1. Install the `schedule` library:
+   ```bash
+   pip install -r power_price/requirements.txt
+   ```
+
+2. Run the scheduler:
+   ```bash
+   python power_price/auto_sync.py
+   ```
+
+3. For Windows background service (no console window):
+   ```bash
+   pythonw power_price/auto_sync.py
+   ```
+
+**Features:**
+- Runs sync every 5 minutes automatically
+- Logs to `power_price/auto_sync.log`
+- Runs initial sync immediately on startup
+- Graceful shutdown with Ctrl+C
+
+**Windows Task Scheduler Setup:**
+1. Open Task Scheduler
+2. Create Basic Task
+3. Trigger: "When the computer starts" or "Daily"
+4. Action: Start a program
+5. Program: `pythonw.exe`
+6. Arguments: `C:\Projects\plug\power_price\auto_sync.py`
+7. Start in: `C:\Projects\plug`
+8. Check "Run whether user is logged on or not"
+
+**Note:** The local scheduler requires your machine to be running. For 24/7 operation, consider using GitHub Actions or a cloud server.
 
 ## Data Sources
 
 The script fetches from three NEMweb sources:
-1. **Dispatch Reports** (`DISPATCH_REPORTS_URL`): Historical settlement prices
-2. **P5 Reports** (`P5_REPORTS_URL`): 5-minute predispatch forecasts
-3. **Predispatch Reports** (`PREDISPATCH_REPORTS_URL`): 30-minute predispatch forecasts
+1. **Dispatch Reports** (`DISPATCH_REPORTS_URL`): Historical settlement prices (collected continuously)
+2. **P5 Reports** (`P5_REPORTS_URL`): 5-minute predispatch forecasts (last 2 hours only)
+3. **Predispatch Reports** (`PREDISPATCH_REPORTS_URL`): 30-minute predispatch forecasts (last 2 hours only)
+
+**Collection Limits:**
+- Historical dispatch: All available data (no limit)
+- 5-minute forecast: Only next 2 hours ahead
+- 30-minute forecast: Only next 2 hours ahead
 
 ## Regions Supported
 
@@ -157,6 +195,7 @@ The script provides detailed console output:
 - Connection status
 - Fetch progress for each region and data type
 - Sync statistics (inserted/updated/skipped)
+- Cleanup statistics (forecast data removed)
 - Error summary
 
 ## Notes
@@ -165,4 +204,6 @@ The script provides detailed console output:
 - Data is cached locally before syncing to MongoDB
 - Timezone handling uses `Australia/Sydney` (AEST/AEDT)
 - File timestamps are extracted from NEMweb filenames
+- Forecast data cleanup runs automatically after each sync
+- Historical dispatch data is never deleted, only forecast fields are cleaned up
 
