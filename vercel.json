@@ -1,4 +1,10 @@
 {
+  "builds": [
+    {
+      "src": "api/server.py",
+      "use": "@vercel/python"
+    }
+  ],
   "routes": [
     {
       "src": "/(.*)",
@@ -10,11 +16,6 @@
       "path": "/api/cron/collect-device-usage",
       "schedule": "0 0 * * *"
     }
-  ],
-  "functions": {
-    "api/server.py": {
-      "maxDuration": 60
-    }
-  }
+  ]
 }
 
