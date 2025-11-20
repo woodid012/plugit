@@ -14,31 +14,53 @@ from datetime import datetime, timedelta
 import time
 
 # Import credentials - with fallback to environment variables for Vercel
-_has_ios_logins = False
+# Use a function to delay import until runtime
+def _load_ios_logins():
+    """Load credentials from IoS_logins.py or environment variables"""
+    try:
+        import importlib
+        _ios_logins_module = importlib.import_module('IoS_logins')
+        return {
+            'TAPO_EMAIL': _ios_logins_module.TAPO_EMAIL,
+            'TAPO_PASSWORD': _ios_logins_module.TAPO_PASSWORD,
+            'MEROSS_EMAIL': _ios_logins_module.MEROSS_EMAIL,
+            'MEROSS_PASSWORD': _ios_logins_module.MEROSS_PASSWORD,
+            'TUYA_ACCESS_ID': _ios_logins_module.TUYA_ACCESS_ID,
+            'TUYA_ACCESS_SECRET': _ios_logins_module.TUYA_ACCESS_SECRET,
+            'TUYA_API_REGION': _ios_logins_module.TUYA_API_REGION,
+            'KNOWN_DEVICES': _ios_logins_module.KNOWN_DEVICES,
+            'MATTER_DEVICES': _ios_logins_module.MATTER_DEVICES,
+            'get_all_matter_devices': _ios_logins_module.get_all_matter_devices,
+            'MONGO_USERNAME': _ios_logins_module.MONGO_USERNAME,
+            'MONGO_PASSWORD': _ios_logins_module.MONGO_PASSWORD,
+            'MONGO_URI': _ios_logins_module.MONGO_URI,
+            'MONGO_DB_NAME': _ios_logins_module.MONGO_DB_NAME,
+            'MONGO_COLLECTION_NAME': _ios_logins_module.MONGO_COLLECTION_NAME,
+        }
+    except (ImportError, ModuleNotFoundError) as e:
+        print(f"[INFO] IoS_logins.py not found ({e}), using environment variables")
+        return None
 
-# Use importlib to dynamically import to avoid parse-time errors
-try:
-    import importlib
-    _ios_logins_module = importlib.import_module('IoS_logins')
-    TAPO_EMAIL = _ios_logins_module.TAPO_EMAIL
-    TAPO_PASSWORD = _ios_logins_module.TAPO_PASSWORD
-    MEROSS_EMAIL = _ios_logins_module.MEROSS_EMAIL
-    MEROSS_PASSWORD = _ios_logins_module.MEROSS_PASSWORD
-    TUYA_ACCESS_ID = _ios_logins_module.TUYA_ACCESS_ID
-    TUYA_ACCESS_SECRET = _ios_logins_module.TUYA_ACCESS_SECRET
-    TUYA_API_REGION = _ios_logins_module.TUYA_API_REGION
-    KNOWN_DEVICES = _ios_logins_module.KNOWN_DEVICES
-    MATTER_DEVICES = _ios_logins_module.MATTER_DEVICES
-    get_all_matter_devices = _ios_logins_module.get_all_matter_devices
-    MONGO_USERNAME = _ios_logins_module.MONGO_USERNAME
-    MONGO_PASSWORD = _ios_logins_module.MONGO_PASSWORD
-    MONGO_URI = _ios_logins_module.MONGO_URI
-    MONGO_DB_NAME = _ios_logins_module.MONGO_DB_NAME
-    MONGO_COLLECTION_NAME = _ios_logins_module.MONGO_COLLECTION_NAME
+# Try to load from IoS_logins.py
+_creds = _load_ios_logins()
+if _creds:
+    TAPO_EMAIL = _creds['TAPO_EMAIL']
+    TAPO_PASSWORD = _creds['TAPO_PASSWORD']
+    MEROSS_EMAIL = _creds['MEROSS_EMAIL']
+    MEROSS_PASSWORD = _creds['MEROSS_PASSWORD']
+    TUYA_ACCESS_ID = _creds['TUYA_ACCESS_ID']
+    TUYA_ACCESS_SECRET = _creds['TUYA_ACCESS_SECRET']
+    TUYA_API_REGION = _creds['TUYA_API_REGION']
+    KNOWN_DEVICES = _creds['KNOWN_DEVICES']
+    MATTER_DEVICES = _creds['MATTER_DEVICES']
+    get_all_matter_devices = _creds['get_all_matter_devices']
+    MONGO_USERNAME = _creds['MONGO_USERNAME']
+    MONGO_PASSWORD = _creds['MONGO_PASSWORD']
+    MONGO_URI = _creds['MONGO_URI']
+    MONGO_DB_NAME = _creds['MONGO_DB_NAME']
+    MONGO_COLLECTION_NAME = _creds['MONGO_COLLECTION_NAME']
     _has_ios_logins = True
-except (ImportError, ModuleNotFoundError) as e:
-    # Fallback to environment variables (for Vercel deployment)
-    print(f"[INFO] IoS_logins.py not found ({e}), using environment variables")
+else:
     _has_ios_logins = False
 
 if not _has_ios_logins:
