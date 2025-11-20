@@ -1,5 +1,12 @@
 // Device Control Functions
 
+// Track pending status updates (deviceId -> { timeoutId, action, timestamp })
+const pendingStatusUpdates = {};
+
+function getDeviceKey(deviceId, deviceType) {
+    return `${deviceType}_${deviceId}`;
+}
+
 function renderAllDevices(devices) {
     const container = document.getElementById('all-devices');
     const group = document.querySelector('.device-group');
@@ -69,14 +76,14 @@ function renderAllDevices(devices) {
                 ${device.type}${energyInfo}
             </div>
             <div class="device-controls">
-                <button class="control-btn btn-on"
+                <button class="control-btn btn-on ${device.online && device.status === 'on' ? 'btn-greyed' : ''}"
                         onclick="${onControl}"
-                        ${!device.online ? 'disabled' : ''}>
+                        ${!device.online || device.status === 'on' ? 'disabled' : ''}>
                     ON
                 </button>
-                <button class="control-btn btn-off"
+                <button class="control-btn btn-off ${device.online && device.status === 'off' ? 'btn-greyed' : ''}"
                         onclick="${offControl}"
-                        ${!device.online ? 'disabled' : ''}>
+                        ${!device.online || device.status === 'off' ? 'disabled' : ''}>
                     OFF
                 </button>
             </div>
@@ -114,6 +121,13 @@ function updateDeviceStatusOptimistically(deviceId, action, deviceType) {
 }
 
 async function controlTapo(deviceId, action) {
+    const deviceKey = getDeviceKey(deviceId, 'tapo');
+    
+    // Clear any existing timeout for this device
+    if (pendingStatusUpdates[deviceKey]) {
+        clearTimeout(pendingStatusUpdates[deviceKey].timeoutId);
+    }
+    
     // Optimistically update the UI immediately
     updateDeviceStatusOptimistically(deviceId, action, 'tapo');
     
@@ -124,24 +138,41 @@ async function controlTapo(deviceId, action) {
         const data = await response.json();
 
         if (data.success) {
-            // Immediate refresh to get actual device state
-            await loadDevices(false);
-            // Second refresh after 1 second to ensure we catch any delayed state changes
-            setTimeout(() => loadDevices(false), 1000);
+            // Set timeout to refresh after 10 seconds
+            const timeoutId = setTimeout(() => {
+                loadDevices(false);
+                delete pendingStatusUpdates[deviceKey];
+            }, 10000);
+            
+            // Track this pending update
+            pendingStatusUpdates[deviceKey] = {
+                timeoutId: timeoutId,
+                action: action,
+                timestamp: Date.now()
+            };
         } else {
             // Revert optimistic update on error
             loadDevices(false);
+            delete pendingStatusUpdates[deviceKey];
             alert(`Error: ${data.error}`);
         }
     } catch (error) {
         // Revert optimistic update on error
         loadDevices(false);
+        delete pendingStatusUpdates[deviceKey];
         console.error('Error controlling Tapo device:', error);
         alert(`Error: ${error.message}`);
     }
 }
 
 async function controlMeross(uuid, action) {
+    const deviceKey = getDeviceKey(uuid, 'meross');
+    
+    // Clear any existing timeout for this device
+    if (pendingStatusUpdates[deviceKey]) {
+        clearTimeout(pendingStatusUpdates[deviceKey].timeoutId);
+    }
+    
     // Optimistically update the UI immediately
     updateDeviceStatusOptimistically(uuid, action, 'meross');
     
@@ -152,24 +183,41 @@ async function controlMeross(uuid, action) {
         const data = await response.json();
 
         if (data.success) {
-            // Immediate refresh to get actual device state
-            await loadDevices(false);
-            // Second refresh after 1 second to ensure we catch any delayed state changes
-            setTimeout(() => loadDevices(false), 1000);
+            // Set timeout to refresh after 10 seconds
+            const timeoutId = setTimeout(() => {
+                loadDevices(false);
+                delete pendingStatusUpdates[deviceKey];
+            }, 10000);
+            
+            // Track this pending update
+            pendingStatusUpdates[deviceKey] = {
+                timeoutId: timeoutId,
+                action: action,
+                timestamp: Date.now()
+            };
         } else {
             // Revert optimistic update on error
             loadDevices(false);
+            delete pendingStatusUpdates[deviceKey];
             alert(`Error: ${data.error}`);
         }
     } catch (error) {
         // Revert optimistic update on error
         loadDevices(false);
+        delete pendingStatusUpdates[deviceKey];
         console.error('Error controlling Meross device:', error);
         alert(`Error: ${error.message}`);
     }
 }
 
 async function controlArlec(uuid, action) {
+    const deviceKey = getDeviceKey(uuid, 'arlec');
+    
+    // Clear any existing timeout for this device
+    if (pendingStatusUpdates[deviceKey]) {
+        clearTimeout(pendingStatusUpdates[deviceKey].timeoutId);
+    }
+    
     // Optimistically update the UI immediately
     updateDeviceStatusOptimistically(uuid, action, 'arlec');
     
@@ -180,24 +228,41 @@ async function controlArlec(uuid, action) {
         const data = await response.json();
 
         if (data.success) {
-            // Immediate refresh to get actual device state
-            await loadDevices(false);
-            // Second refresh after 1 second to ensure we catch any delayed state changes
-            setTimeout(() => loadDevices(false), 1000);
+            // Set timeout to refresh after 10 seconds
+            const timeoutId = setTimeout(() => {
+                loadDevices(false);
+                delete pendingStatusUpdates[deviceKey];
+            }, 10000);
+            
+            // Track this pending update
+            pendingStatusUpdates[deviceKey] = {
+                timeoutId: timeoutId,
+                action: action,
+                timestamp: Date.now()
+            };
         } else {
             // Revert optimistic update on error
             loadDevices(false);
+            delete pendingStatusUpdates[deviceKey];
             alert(`Error: ${data.error}`);
         }
     } catch (error) {
         // Revert optimistic update on error
         loadDevices(false);
+        delete pendingStatusUpdates[deviceKey];
         console.error('Error controlling Arlec device:', error);
         alert(`Error: ${error.message}`);
     }
 }
 
 async function controlMatter(deviceId, action) {
+    const deviceKey = getDeviceKey(deviceId, 'matter');
+    
+    // Clear any existing timeout for this device
+    if (pendingStatusUpdates[deviceKey]) {
+        clearTimeout(pendingStatusUpdates[deviceKey].timeoutId);
+    }
+    
     // Optimistically update the UI immediately
     updateDeviceStatusOptimistically(deviceId, action, 'matter');
     
@@ -208,18 +273,28 @@ async function controlMatter(deviceId, action) {
         const data = await response.json();
 
         if (data.success) {
-            // Immediate refresh to get actual device state
-            await loadDevices(false);
-            // Second refresh after 1 second to ensure we catch any delayed state changes
-            setTimeout(() => loadDevices(false), 1000);
+            // Set timeout to refresh after 10 seconds
+            const timeoutId = setTimeout(() => {
+                loadDevices(false);
+                delete pendingStatusUpdates[deviceKey];
+            }, 10000);
+            
+            // Track this pending update
+            pendingStatusUpdates[deviceKey] = {
+                timeoutId: timeoutId,
+                action: action,
+                timestamp: Date.now()
+            };
         } else {
             // Revert optimistic update on error
             loadDevices(false);
+            delete pendingStatusUpdates[deviceKey];
             alert(`Error: ${data.error}`);
         }
     } catch (error) {
         // Revert optimistic update on error
         loadDevices(false);
+        delete pendingStatusUpdates[deviceKey];
         console.error('Error controlling Matter device:', error);
         alert(`Error: ${error.message}`);
     }

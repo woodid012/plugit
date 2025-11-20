@@ -131,6 +131,15 @@ h1 {
     background: linear-gradient(135deg, #4facfe, #00f2fe);
 }
 
+.group-note {
+    color: #666;
+    font-size: 0.85em;
+    font-style: italic;
+    margin-top: 5px;
+    margin-bottom: 15px;
+    padding-left: 10px;
+}
+
 .group-title {
     font-size: 1.8em;
     color: #333;
