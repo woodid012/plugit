@@ -5,5 +5,5 @@ echo ============================================================
 echo.
 echo Starting web server...
 echo.
-python server.py
+python api/server.py
 pause

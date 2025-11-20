@@ -1,14 +1,8 @@
 {
-  "builds": [
-    {
-      "src": "server.py",
-      "use": "@vercel/python"
-    }
-  ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "server.py"
+      "dest": "api/server.py"
     }
   ],
   "crons": [
@@ -18,7 +12,7 @@
     }
   ],
   "functions": {
-    "server.py": {
+    "api/server.py": {
       "maxDuration": 60
     }
   }

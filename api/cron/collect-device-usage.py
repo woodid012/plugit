@@ -20,7 +20,7 @@ def collect_device_usage():
     try:
         # Import collection function
         from data_collection.device_usage_collector import collect_and_save
-        from server import (
+        from api.server import (
             get_tapo_status, get_meross_status_async, get_arlec_status, get_matter_status,
             run_in_meross_loop, get_all_matter_devices,
             KNOWN_DEVICES, tapo_devices_storage, MATTER_AVAILABLE

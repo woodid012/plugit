@@ -4,6 +4,14 @@ Flask backend for controlling Tapo, Meross, Arlec, and Matter devices
 Updated for Vercel deployment compatibility
 """
 
+import sys
+from pathlib import Path
+
+# Add project root to Python path for imports (needed since server.py is in api/)
+_project_root = Path(__file__).parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 import asyncio
@@ -159,7 +167,7 @@ tapo_devices_list = []  # List of {device_id, ip, email, password, name}
 # Dynamic Tapo device storage (device_id -> {ip, email, password})
 # This allows adding devices without modifying IoS_logins.py
 tapo_devices_storage = {}
-TAPO_DEVICES_FILE = 'tapo_devices.json'
+TAPO_DEVICES_FILE = Path(__file__).parent.parent / 'tapo_devices.json'
 
 # Timeseries data is now stored in browser localStorage (client-side only)
 
@@ -182,11 +190,11 @@ def load_tapo_devices():
     """Load dynamically added Tapo devices from file"""
     global tapo_devices_storage
     
-    if not os.path.exists(TAPO_DEVICES_FILE):
+    if not TAPO_DEVICES_FILE.exists():
         return
     
     try:
-        with open(TAPO_DEVICES_FILE, 'r') as f:
+        with TAPO_DEVICES_FILE.open('r') as f:
             tapo_devices_storage = json.load(f)
         
         if tapo_devices_storage:
@@ -201,7 +209,7 @@ def save_tapo_devices():
     global tapo_devices_storage
     
     try:
-        with open(TAPO_DEVICES_FILE, 'w') as f:
+        with TAPO_DEVICES_FILE.open('w') as f:
             json.dump(tapo_devices_storage, f, indent=2)
     except Exception as e:
         print(f"[ERROR] Failed to save Tapo devices: {e}")
@@ -742,12 +750,16 @@ def ensure_initialized():
 @app.route('/')
 def index():
     """Serve the main HTML page"""
-    return send_from_directory('.', 'index.html')
+    # Use project root directory (parent of api/)
+    project_root = Path(__file__).parent.parent
+    return send_from_directory(str(project_root), 'index.html')
 
 @app.route('/assets/<path:filename>')
 def serve_assets(filename):
     """Serve static files from assets directory"""
-    return send_from_directory('assets', filename)
+    # Use project root directory (parent of api/)
+    project_root = Path(__file__).parent.parent
+    return send_from_directory(str(project_root / 'assets'), filename)
 
 
 @app.route('/api/server/status', methods=['GET'])
@@ -1184,7 +1196,7 @@ def get_nem_prices_latest():
         from pathlib import Path
 
         # Path to NEM price cache file
-        cache_file = Path(__file__).parent / 'power_price' / 'nem_price_cache.json'
+        cache_file = Path(__file__).parent.parent / 'power_price' / 'nem_price_cache.json'
 
         if not os.path.exists(cache_file):
             return jsonify({
