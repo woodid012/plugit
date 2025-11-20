@@ -14,15 +14,23 @@ from datetime import datetime, timedelta
 import time
 
 # Import credentials - with fallback to environment variables for Vercel
-try:
-    from IoS_logins import (
-        TAPO_EMAIL, TAPO_PASSWORD, 
-        MEROSS_EMAIL, MEROSS_PASSWORD, 
-        TUYA_ACCESS_ID, TUYA_ACCESS_SECRET, TUYA_API_REGION,
-        KNOWN_DEVICES, MATTER_DEVICES, get_all_matter_devices,
-        MONGO_USERNAME, MONGO_PASSWORD, MONGO_URI, MONGO_DB_NAME, MONGO_COLLECTION_NAME
-    )
-except ImportError:
+_ios_logins_path = os.path.join(os.path.dirname(__file__), 'IoS_logins.py')
+_has_ios_logins = os.path.exists(_ios_logins_path)
+
+if _has_ios_logins:
+    try:
+        from IoS_logins import (
+            TAPO_EMAIL, TAPO_PASSWORD, 
+            MEROSS_EMAIL, MEROSS_PASSWORD, 
+            TUYA_ACCESS_ID, TUYA_ACCESS_SECRET, TUYA_API_REGION,
+            KNOWN_DEVICES, MATTER_DEVICES, get_all_matter_devices,
+            MONGO_USERNAME, MONGO_PASSWORD, MONGO_URI, MONGO_DB_NAME, MONGO_COLLECTION_NAME
+        )
+    except (ImportError, ModuleNotFoundError) as e:
+        print(f"[WARNING] Failed to import IoS_logins: {e}")
+        _has_ios_logins = False
+
+if not _has_ios_logins:
     # Fallback to environment variables (for Vercel deployment)
     print("[INFO] IoS_logins.py not found, using environment variables")
     TAPO_EMAIL = os.getenv('TAPO_EMAIL', '')
