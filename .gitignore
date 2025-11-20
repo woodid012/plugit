@@ -3,6 +3,7 @@ IoS_logins.py
 credentials.py
 config.py
 .env
+VERCEL_ENV_VARIABLES.txt
 
 # Python
 __pycache__/
