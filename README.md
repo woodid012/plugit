@@ -2,6 +2,8 @@
 
 Centralized control for Tapo, Meross, Arlec, and Matter smart home devices using Python.
 
+Deployed on Vercel.
+
 ## Overview
 
 This project provides Python scripts to control:
