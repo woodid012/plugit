@@ -14,21 +14,32 @@ from datetime import datetime, timedelta
 import time
 
 # Import credentials - with fallback to environment variables for Vercel
-_ios_logins_path = os.path.join(os.path.dirname(__file__), 'IoS_logins.py')
-_has_ios_logins = os.path.exists(_ios_logins_path)
+_has_ios_logins = False
 
-if _has_ios_logins:
-    try:
-        from IoS_logins import (
-            TAPO_EMAIL, TAPO_PASSWORD, 
-            MEROSS_EMAIL, MEROSS_PASSWORD, 
-            TUYA_ACCESS_ID, TUYA_ACCESS_SECRET, TUYA_API_REGION,
-            KNOWN_DEVICES, MATTER_DEVICES, get_all_matter_devices,
-            MONGO_USERNAME, MONGO_PASSWORD, MONGO_URI, MONGO_DB_NAME, MONGO_COLLECTION_NAME
-        )
-    except (ImportError, ModuleNotFoundError) as e:
-        print(f"[WARNING] Failed to import IoS_logins: {e}")
-        _has_ios_logins = False
+# Use importlib to dynamically import to avoid parse-time errors
+try:
+    import importlib
+    _ios_logins_module = importlib.import_module('IoS_logins')
+    TAPO_EMAIL = _ios_logins_module.TAPO_EMAIL
+    TAPO_PASSWORD = _ios_logins_module.TAPO_PASSWORD
+    MEROSS_EMAIL = _ios_logins_module.MEROSS_EMAIL
+    MEROSS_PASSWORD = _ios_logins_module.MEROSS_PASSWORD
+    TUYA_ACCESS_ID = _ios_logins_module.TUYA_ACCESS_ID
+    TUYA_ACCESS_SECRET = _ios_logins_module.TUYA_ACCESS_SECRET
+    TUYA_API_REGION = _ios_logins_module.TUYA_API_REGION
+    KNOWN_DEVICES = _ios_logins_module.KNOWN_DEVICES
+    MATTER_DEVICES = _ios_logins_module.MATTER_DEVICES
+    get_all_matter_devices = _ios_logins_module.get_all_matter_devices
+    MONGO_USERNAME = _ios_logins_module.MONGO_USERNAME
+    MONGO_PASSWORD = _ios_logins_module.MONGO_PASSWORD
+    MONGO_URI = _ios_logins_module.MONGO_URI
+    MONGO_DB_NAME = _ios_logins_module.MONGO_DB_NAME
+    MONGO_COLLECTION_NAME = _ios_logins_module.MONGO_COLLECTION_NAME
+    _has_ios_logins = True
+except (ImportError, ModuleNotFoundError) as e:
+    # Fallback to environment variables (for Vercel deployment)
+    print(f"[INFO] IoS_logins.py not found ({e}), using environment variables")
+    _has_ios_logins = False
 
 if not _has_ios_logins:
     # Fallback to environment variables (for Vercel deployment)
