@@ -39,10 +39,10 @@ jobs:
           else
             # Scheduled run - check current minute
             MINUTE=$(date +%M)
-            if [ $((MINUTE % 5)) -eq 0 ]; then
+            if [ $((10#$MINUTE % 5)) -eq 0 ]; then
               echo "run-full=true" >> $GITHUB_OUTPUT
             fi
-            if [ $MINUTE -eq 0 ]; then
+            if [ $((10#$MINUTE)) -eq 0 ]; then
               echo "run-historical=true" >> $GITHUB_OUTPUT
             fi
           fi
