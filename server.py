@@ -1,6 +1,7 @@
 """
 Smart Home Control Server
 Flask backend for controlling Tapo, Meross, Arlec, and Matter devices
+Updated for Vercel deployment compatibility
 """
 
 from flask import Flask, jsonify, request, send_from_directory
