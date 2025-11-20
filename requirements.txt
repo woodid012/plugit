@@ -16,3 +16,6 @@ requests>=2.31.0
 beautifulsoup4>=4.12.0
 pytz>=2023.3
 pymongo>=4.6.0
+
+# Data Collection Scheduler
+schedule>=1.2.0

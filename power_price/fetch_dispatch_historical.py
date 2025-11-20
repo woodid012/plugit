@@ -29,12 +29,28 @@ DISPATCH_REPORTS_URL = "https://nemweb.com.au/Reports/Current/Dispatch_Reports/"
 AEST_FIXED = pytz.FixedOffset(600)  # UTC+10:00 (AEST)
 AEST = pytz.timezone('Australia/Sydney')
 
-# MongoDB connection details
-MONGO_USERNAME = "NEMprice"
-MONGO_PASSWORD = "test_smart123"
-MONGO_URI = f"mongodb+srv://{MONGO_USERNAME}:{MONGO_PASSWORD}@cluster0.tm9wpue.mongodb.net/?appName=Cluster0"
-DB_NAME = "nem_prices"
-COLLECTION_NAME = "price_data"
+# Import MongoDB connection from centralized module
+try:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from mongodb.connection import connect_mongo, DB_NAME, PRICE_COLLECTION_NAME
+    COLLECTION_NAME = PRICE_COLLECTION_NAME
+except ImportError:
+    # Fallback if mongodb module not available
+    MONGO_USERNAME = "NEMprice"
+    MONGO_PASSWORD = "test_smart123"
+    MONGO_URI = f"mongodb+srv://{MONGO_USERNAME}:{MONGO_PASSWORD}@cluster0.tm9wpue.mongodb.net/?appName=Cluster0"
+    DB_NAME = "nem_prices"
+    COLLECTION_NAME = "price_data"
+    def connect_mongo():
+        try:
+            client = MongoClient(MONGO_URI, server_api=ServerApi('1'))
+            client.admin.command('ping')
+            return client
+        except Exception as e:
+            print(f"[ERROR] MongoDB connection failed: {e}")
+            return None
 
 # Regions to extract (NSW1, VIC1, and others)
 REGIONS = ['NSW1', 'VIC1', 'QLD1', 'SA1', 'TAS1']
@@ -276,19 +292,9 @@ def parse_dispatch_csv(csv_path: str, expected_settlement_date: datetime,
         traceback.print_exc()
         return {}
 
-def connect_mongodb() -> Optional[MongoClient]:
-    """Connect to MongoDB and return client"""
-    try:
-        client = MongoClient(MONGO_URI, server_api=ServerApi('1'))
-        client.admin.command('ping')
-        print("[OK] Successfully connected to MongoDB!")
-        return client
-    except ConnectionFailure as e:
-        print(f"[ERROR] Failed to connect to MongoDB: {e}")
-        return None
-    except Exception as e:
-        print(f"[ERROR] MongoDB connection error: {e}")
-        return None
+# connect_mongodb is now an alias for connect_mongo from mongodb.connection
+# This maintains backward compatibility
+connect_mongodb = connect_mongo
 
 def store_to_mongodb(region: str, timestamp: str, price: float, source_file: str):
     """

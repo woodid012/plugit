@@ -340,22 +340,6 @@ def save_to_cache(data_type: str, timestamp_key: str, data: Dict):
     save_unified_cache(cache)
 
 
-def save_to_json(data: Dict, filename: str):
-    """Legacy compatibility - save to unified cache."""
-    parts = filename.replace('.json', '').split('_')
-    data_type = parts[0]
-    timestamp_key = parts[-1]
-    save_to_cache(data_type, timestamp_key, data)
-
-
-def load_cached_json(filename: str) -> Optional[Dict]:
-    """Legacy compatibility - load from unified cache."""
-    parts = filename.replace('.json', '').split('_')
-    data_type = parts[0]
-    timestamp_key = parts[-1]
-    return get_from_cache(data_type, timestamp_key)
-
-
 # Main fetch functions
 def fetch_p5min_prices(region: str = 'VIC1', hours_ahead: int = 1, force_refresh: bool = False) -> Optional[Dict]:
     """Fetch 5-minute predispatch prices."""
@@ -410,7 +394,7 @@ def fetch_p5min_prices(region: str = 'VIC1', hours_ahead: int = 1, force_refresh
             'prices': prices
         }
 
-        save_to_json(output, f"p5min_{region.lower()}_{date_str}.json")
+        save_to_cache('p5min', date_str, output)
         return output
     finally:
         temp_dir.cleanup()
@@ -469,7 +453,7 @@ def fetch_predispatch_prices(region: str = 'VIC1', hours_ahead: int = 24, force_
             'prices': prices
         }
 
-        save_to_json(output, f"predispatch_{region.lower()}_{date_str}.json")
+        save_to_cache('predispatch', date_str, output)
         return output
     finally:
         temp_dir.cleanup()
@@ -532,7 +516,7 @@ def fetch_dispatch_prices(region: str = 'VIC1', hours_back: int = 24, force_refr
             'prices': prices
         }
 
-        save_to_json(output, f"dispatch_{region.lower()}_{date_str}.json")
+        save_to_cache('dispatch', date_str, output)
         return output
     finally:
         temp_dir.cleanup()

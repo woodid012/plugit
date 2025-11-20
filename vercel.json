@@ -1,0 +1,34 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "server.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "server.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "server.py"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/collect-device-usage",
+      "schedule": "*/5 * * * *"
+    }
+  ],
+  "functions": {
+    "server.py": {
+      "maxDuration": 60
+    },
+    "api/cron/collect-device-usage": {
+      "maxDuration": 60
+    }
+  }
+}
+

@@ -13,14 +13,60 @@ import json
 from datetime import datetime, timedelta
 import time
 
-# Import credentials
-from IoS_logins import (
-    TAPO_EMAIL, TAPO_PASSWORD, 
-    MEROSS_EMAIL, MEROSS_PASSWORD, 
-    TUYA_ACCESS_ID, TUYA_ACCESS_SECRET, TUYA_API_REGION,
-    KNOWN_DEVICES, MATTER_DEVICES, get_all_matter_devices,
-    MONGO_USERNAME, MONGO_PASSWORD, MONGO_URI, MONGO_DB_NAME, MONGO_COLLECTION_NAME
-)
+# Import credentials - with fallback to environment variables for Vercel
+try:
+    from IoS_logins import (
+        TAPO_EMAIL, TAPO_PASSWORD, 
+        MEROSS_EMAIL, MEROSS_PASSWORD, 
+        TUYA_ACCESS_ID, TUYA_ACCESS_SECRET, TUYA_API_REGION,
+        KNOWN_DEVICES, MATTER_DEVICES, get_all_matter_devices,
+        MONGO_USERNAME, MONGO_PASSWORD, MONGO_URI, MONGO_DB_NAME, MONGO_COLLECTION_NAME
+    )
+except ImportError:
+    # Fallback to environment variables (for Vercel deployment)
+    print("[INFO] IoS_logins.py not found, using environment variables")
+    TAPO_EMAIL = os.getenv('TAPO_EMAIL', '')
+    TAPO_PASSWORD = os.getenv('TAPO_PASSWORD', '')
+    MEROSS_EMAIL = os.getenv('MEROSS_EMAIL', '')
+    MEROSS_PASSWORD = os.getenv('MEROSS_PASSWORD', '')
+    TUYA_ACCESS_ID = os.getenv('TUYA_ACCESS_ID', '')
+    TUYA_ACCESS_SECRET = os.getenv('TUYA_ACCESS_SECRET', '')
+    TUYA_API_REGION = os.getenv('TUYA_API_REGION', 'us')
+    
+    # Parse JSON strings for complex data structures
+    KNOWN_DEVICES = {}
+    MATTER_DEVICES = {}
+    try:
+        known_devices_str = os.getenv('KNOWN_DEVICES', '{}')
+        if known_devices_str:
+            KNOWN_DEVICES = json.loads(known_devices_str)
+    except:
+        KNOWN_DEVICES = {}
+    
+    try:
+        matter_devices_str = os.getenv('MATTER_DEVICES', '{}')
+        if matter_devices_str:
+            MATTER_DEVICES = json.loads(matter_devices_str)
+    except:
+        MATTER_DEVICES = {}
+    
+    def get_all_matter_devices():
+        """Fallback function for get_all_matter_devices"""
+        devices = []
+        for device_id, device_info in MATTER_DEVICES.items():
+            devices.append({
+                'device_id': device_id,
+                'ip': device_info.get('ip'),
+                'port': device_info.get('port', 5540),
+                'name': device_info.get('name', device_id)
+            })
+        return devices
+    
+    MONGO_USERNAME = os.getenv('MONGO_USERNAME', '')
+    MONGO_PASSWORD = os.getenv('MONGO_PASSWORD', '')
+    MONGO_URI = os.getenv('MONGO_URI', '')
+    MONGO_DB_NAME = os.getenv('MONGO_DB_NAME', '')
+    MONGO_COLLECTION_NAME = os.getenv('MONGO_COLLECTION_NAME', '')
 
 # Import device libraries
 from tapo import ApiClient
@@ -35,6 +81,14 @@ try:
 except ImportError:
     MATTER_AVAILABLE = False
     print("[WARNING] Matter controller not available. Install Matter dependencies.")
+
+# Import data collection module
+try:
+    from data_collection.device_usage_collector import collect_and_save, connect_mongo
+    DATA_COLLECTION_AVAILABLE = True
+except ImportError:
+    DATA_COLLECTION_AVAILABLE = False
+    print("[WARNING] Data collection module not available.")
 
 app = Flask(__name__)
 CORS(app)
@@ -637,6 +691,12 @@ async def control_meross_async(uuid, action):
 
 # Routes
 
+@app.before_request
+def ensure_initialized():
+    """Ensure app is initialized before handling requests"""
+    if not _initialized:
+        initialize_app()
+
 @app.route('/')
 def index():
     """Serve the main HTML page"""
@@ -1152,18 +1212,33 @@ def get_mongodb_prices():
         DB_NAME = MONGO_DB_NAME
         COLLECTION_NAME = MONGO_COLLECTION_NAME
         
-        # Connect to MongoDB
+        # Connect to MongoDB using centralized connection
         try:
-            client = MongoClient(MONGO_URI, server_api=ServerApi('1'))
-            client.admin.command('ping')
-        except ConnectionFailure as e:
-            return jsonify({
-                'success': False,
-                'error': f'Failed to connect to MongoDB: {e}'
-            }), 500
+            from mongodb.connection import connect_mongo, DB_NAME, PRICE_COLLECTION_NAME
+            client = connect_mongo()
+            if not client:
+                return jsonify({
+                    'success': False,
+                    'error': 'Failed to connect to MongoDB'
+                }), 500
+        except ImportError:
+            # Fallback if mongodb module not available
+            from pymongo.mongo_client import MongoClient
+            from pymongo.server_api import ServerApi
+            from pymongo.errors import ConnectionFailure
+            try:
+                client = MongoClient(MONGO_URI, server_api=ServerApi('1'))
+                client.admin.command('ping')
+            except ConnectionFailure as e:
+                return jsonify({
+                    'success': False,
+                    'error': f'Failed to connect to MongoDB: {e}'
+                }), 500
+            DB_NAME = MONGO_DB_NAME
+            PRICE_COLLECTION_NAME = MONGO_COLLECTION_NAME
         
         db = client[DB_NAME]
-        collection = db[COLLECTION_NAME]
+        collection = db[PRICE_COLLECTION_NAME]
         
         # Build query
         query = {'region': region}
@@ -1272,25 +1347,382 @@ def get_cost_data():
     })
 
 
+# ============================================================================
+# Device Usage Data Collection API Endpoints
+# ============================================================================
+
+@app.route('/api/device-usage/history', methods=['GET'])
+def get_device_usage_history():
+    """Get historical device usage data from MongoDB for phone app"""
+    if not DATA_COLLECTION_AVAILABLE:
+        return jsonify({'success': False, 'error': 'Data collection module not available'}), 503
+    
+    try:
+        from pymongo.mongo_client import MongoClient
+        from pymongo.server_api import ServerApi
+        from pymongo.errors import ConnectionFailure
+        from datetime import datetime
+        import pytz
+        
+        # Get parameters
+        device_id = request.args.get('device_id')  # Optional filter
+        start_time = request.args.get('start_time')
+        end_time = request.args.get('end_time')
+        region = request.args.get('region', 'VIC1')
+        
+        # Validate time range
+        if not start_time or not end_time:
+            return jsonify({
+                'success': False,
+                'error': 'start_time and end_time parameters are required'
+            }), 400
+        
+        # Connect to MongoDB using centralized connection
+        try:
+            from mongodb.connection import connect_mongo, DB_NAME, USAGE_COLLECTION_NAME
+            client = connect_mongo()
+            if not client:
+                return jsonify({
+                    'success': False,
+                    'error': 'Failed to connect to MongoDB'
+                }), 500
+        except ImportError:
+            # Fallback if mongodb module not available
+            from data_collection.device_usage_collector import connect_mongo, DB_NAME, USAGE_COLLECTION_NAME
+            client = connect_mongo()
+            if not client:
+                return jsonify({
+                    'success': False,
+                    'error': 'Failed to connect to MongoDB'
+                }), 500
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to connect to MongoDB: {e}'
+            }), 500
+        
+        try:
+            db = client[DB_NAME]
+            collection = db[USAGE_COLLECTION_NAME]
+            
+            # Build query
+            query = {}
+            if device_id:
+                query['device_id'] = device_id
+            if region:
+                query['region'] = region
+            
+            # Add time range
+            try:
+                start_iso = start_time.replace('Z', '+00:00')
+                end_iso = end_time.replace('Z', '+00:00')
+                query['timestamp'] = {
+                    '$gte': start_iso,
+                    '$lte': end_iso
+                }
+            except Exception as e:
+                return jsonify({
+                    'success': False,
+                    'error': f'Invalid time format: {e}'
+                }), 400
+            
+            # Query MongoDB - sort by timestamp ascending
+            documents = collection.find(query).sort('timestamp', 1)
+            
+            # Format results with cost calculation
+            data = []
+            for doc in documents:
+                record = {
+                    'device_id': doc.get('device_id'),
+                    'device_name': doc.get('device_name'),
+                    'device_type': doc.get('device_type'),
+                    'timestamp': doc.get('timestamp'),
+                    'power': doc.get('power'),
+                    'voltage': doc.get('voltage'),
+                    'current': doc.get('current'),
+                    'status': doc.get('status'),
+                    'online': doc.get('online'),
+                    'price_per_kwh': doc.get('price_per_kwh'),
+                    'price_source': doc.get('price_source'),
+                    'status_changed': doc.get('status_changed', False),
+                    'status_change_type': doc.get('status_change_type'),
+                    'interval_count': doc.get('interval_count', 0)
+                }
+                
+                # Calculate cost for this 5-minute interval
+                # Cost = (power_watts / 1000) * (5 minutes / 60) * price_per_kwh
+                if record['power'] is not None and record['price_per_kwh'] is not None:
+                    power_kw = record['power'] / 1000.0
+                    hours = 5.0 / 60.0  # 5 minutes in hours
+                    record['cost'] = round(power_kw * hours * record['price_per_kwh'], 4)
+                else:
+                    record['cost'] = None
+                
+                data.append(record)
+            
+            return jsonify({
+                'success': True,
+                'region': region,
+                'count': len(data),
+                'data': data
+            })
+            
+        finally:
+            client.close()
+            
+    except Exception as e:
+        print(f"Error in get_device_usage_history: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/device-usage/summary', methods=['GET'])
+def get_device_usage_summary():
+    """Get summary statistics for device usage (total energy, cost, etc.)"""
+    if not DATA_COLLECTION_AVAILABLE:
+        return jsonify({'success': False, 'error': 'Data collection module not available'}), 503
+    
+    try:
+        from pymongo.mongo_client import MongoClient
+        from pymongo.server_api import ServerApi
+        from datetime import datetime
+        import pytz
+        
+        # Get parameters
+        device_id = request.args.get('device_id')  # Optional filter
+        start_time = request.args.get('start_time')
+        end_time = request.args.get('end_time')
+        region = request.args.get('region', 'VIC1')
+        
+        # Validate time range
+        if not start_time or not end_time:
+            return jsonify({
+                'success': False,
+                'error': 'start_time and end_time parameters are required'
+            }), 400
+        
+        # Connect to MongoDB using centralized connection
+        try:
+            from mongodb.connection import connect_mongo, DB_NAME, USAGE_COLLECTION_NAME
+            client = connect_mongo()
+            if not client:
+                return jsonify({
+                    'success': False,
+                    'error': 'Failed to connect to MongoDB'
+                }), 500
+        except ImportError:
+            # Fallback if mongodb module not available
+            from data_collection.device_usage_collector import connect_mongo, DB_NAME, USAGE_COLLECTION_NAME
+            client = connect_mongo()
+            if not client:
+                return jsonify({
+                    'success': False,
+                    'error': 'Failed to connect to MongoDB'
+                }), 500
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to connect to MongoDB: {e}'
+            }), 500
+        
+        try:
+            db = client[DB_NAME]
+            collection = db[USAGE_COLLECTION_NAME]
+            
+            # Build query
+            query = {}
+            if device_id:
+                query['device_id'] = device_id
+            if region:
+                query['region'] = region
+            
+            # Add time range
+            try:
+                start_iso = start_time.replace('Z', '+00:00')
+                end_iso = end_time.replace('Z', '+00:00')
+                query['timestamp'] = {
+                    '$gte': start_iso,
+                    '$lte': end_iso
+                }
+            except Exception as e:
+                return jsonify({
+                    'success': False,
+                    'error': f'Invalid time format: {e}'
+                }), 400
+            
+            # Query MongoDB
+            documents = list(collection.find(query).sort('timestamp', 1))
+            
+            # Calculate summary statistics
+            total_energy_kwh = 0.0
+            total_cost = 0.0
+            power_values = []
+            on_count = 0
+            total_count = len(documents)
+            
+            for doc in documents:
+                power = doc.get('power')
+                price = doc.get('price_per_kwh')
+                status = doc.get('status')
+                
+                if power is not None:
+                    power_values.append(power)
+                    # Energy for 5-minute interval: (power_watts / 1000) * (5/60) hours
+                    energy_kwh = (power / 1000.0) * (5.0 / 60.0)
+                    total_energy_kwh += energy_kwh
+                    
+                    if price is not None:
+                        cost = energy_kwh * price
+                        total_cost += cost
+                
+                if status == 'on':
+                    on_count += 1
+            
+            # Calculate statistics
+            avg_power = sum(power_values) / len(power_values) if power_values else 0.0
+            peak_power = max(power_values) if power_values else 0.0
+            min_power = min(power_values) if power_values else 0.0
+            
+            # Calculate on-time (assuming 5-minute intervals)
+            on_time_hours = (on_count * 5.0) / 60.0
+            
+            return jsonify({
+                'success': True,
+                'region': region,
+                'device_id': device_id,
+                'summary': {
+                    'total_energy_kwh': round(total_energy_kwh, 3),
+                    'total_cost': round(total_cost, 2),
+                    'average_power_watts': round(avg_power, 2),
+                    'peak_power_watts': round(peak_power, 2),
+                    'min_power_watts': round(min_power, 2),
+                    'on_time_hours': round(on_time_hours, 2),
+                    'data_points': total_count,
+                    'on_percentage': round((on_count / total_count * 100) if total_count > 0 else 0, 1)
+                }
+            })
+            
+        finally:
+            client.close()
+            
+    except Exception as e:
+        print(f"Error in get_device_usage_summary: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/cron/collect-device-usage', methods=['GET', 'POST'])
+def collect_device_usage_endpoint():
+    """Endpoint for Vercel cron job to trigger device usage collection"""
+    if not DATA_COLLECTION_AVAILABLE:
+        return jsonify({'success': False, 'error': 'Data collection module not available'}), 503
+    
+    try:
+        # Get region parameter (default: VIC1)
+        region = request.args.get('region', 'VIC1')
+        
+        # Get all device statuses (reuse existing function)
+        # We need to call get_devices() logic but get the data structure
+        # For now, we'll call the device loading functions directly
+        
+        # Load Tapo devices
+        def load_tapo_devices():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                tapo_devices = []
+                tapo_tasks = []
+                
+                for name, ip in KNOWN_DEVICES.items():
+                    if 'tapo' in name.lower():
+                        tapo_tasks.append((name, ip, None, None, name))
+                
+                for device_id, device_info in tapo_devices_storage.items():
+                    ip = device_info.get('ip')
+                    email = device_info.get('email')
+                    password = device_info.get('password')
+                    device_name = device_info.get('name', device_id)
+                    tapo_tasks.append((device_id, ip, email, password, device_name))
+                
+                async def load_all():
+                    tasks = [get_tapo_status(ip, email, password, device_name) 
+                            for device_id, ip, email, password, device_name in tapo_tasks]
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    for i, result in enumerate(results):
+                        if not isinstance(result, Exception):
+                            device_id = tapo_tasks[i][0]
+                            result['id'] = device_id
+                            tapo_devices.append(result)
+                
+                if tapo_tasks:
+                    loop.run_until_complete(load_all())
+                return tapo_devices
+            finally:
+                loop.close()
+        
+        # Load all devices in parallel
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            tapo_future = executor.submit(load_tapo_devices)
+            meross_future = executor.submit(lambda: run_in_meross_loop(get_meross_status_async()))
+            arlec_future = executor.submit(get_arlec_status)
+            
+            # Matter devices
+            def load_matter():
+                if not MATTER_AVAILABLE:
+                    return []
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    all_matter = get_all_matter_devices()
+                    async def load_all():
+                        tasks = [get_matter_status(d['device_id'], d.get('ip'), d.get('port', 5540), d.get('name'))
+                                for d in all_matter]
+                        return await asyncio.gather(*tasks, return_exceptions=True)
+                    if all_matter:
+                        results = loop.run_until_complete(load_all())
+                        return [r for r in results if not isinstance(r, Exception)]
+                    return []
+                finally:
+                    loop.close()
+            
+            matter_future = executor.submit(load_matter)
+            
+            tapo_devices = tapo_future.result()
+            meross_status = meross_future.result()
+            arlec_status = arlec_future.result()
+            matter_status = matter_future.result()
+        
+        # Format device statuses for collection
+        device_statuses = {
+            'tapo': tapo_devices,
+            'meross': meross_status,
+            'arlec': arlec_status,
+            'matter': matter_status
+        }
+        
+        # Collect and save
+        result = collect_and_save(device_statuses, region=region)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        print(f"Error in collect_device_usage_endpoint: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 def start_meross_loop():
     """Start the dedicated Meross event loop in a background thread"""
     global meross_loop
     meross_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(meross_loop)
     meross_loop.run_forever()
-
-
-def clear_legacy_cache():
-    """Clear legacy timeseries data cache on server restart"""
-    try:
-        legacy_cache_file = 'timeseries_data.json'
-        if os.path.exists(legacy_cache_file):
-            os.remove(legacy_cache_file)
-            print(f"[OK] Cleared legacy cache: {legacy_cache_file}")
-        else:
-            print(f"[INFO] No legacy cache to clear")
-    except Exception as e:
-        print(f"[WARNING] Failed to clear legacy cache: {e}")
 
 
 def run_async_init():
@@ -1313,26 +1745,288 @@ def run_async_init():
         print(f"Meross init error: {e}")
 
 
+def collect_device_usage_background():
+    """Background function to collect device usage data (for Flask server)"""
+    if not DATA_COLLECTION_AVAILABLE:
+        return
+    
+    try:
+        # Get all device statuses by calling the endpoint logic
+        # We'll reuse the collection endpoint's device loading logic
+        region = 'VIC1'  # Default region
+        
+        # Load Tapo devices
+        def load_tapo_devices():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                tapo_devices = []
+                tapo_tasks = []
+                
+                for name, ip in KNOWN_DEVICES.items():
+                    if 'tapo' in name.lower():
+                        tapo_tasks.append((name, ip, None, None, name))
+                
+                for device_id, device_info in tapo_devices_storage.items():
+                    ip = device_info.get('ip')
+                    email = device_info.get('email')
+                    password = device_info.get('password')
+                    device_name = device_info.get('name', device_id)
+                    tapo_tasks.append((device_id, ip, email, password, device_name))
+                
+                async def load_all():
+                    tasks = [get_tapo_status(ip, email, password, device_name) 
+                            for device_id, ip, email, password, device_name in tapo_tasks]
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    for i, result in enumerate(results):
+                        if not isinstance(result, Exception):
+                            device_id = tapo_tasks[i][0]
+                            result['id'] = device_id
+                            tapo_devices.append(result)
+                
+                if tapo_tasks:
+                    loop.run_until_complete(load_all())
+                return tapo_devices
+            finally:
+                loop.close()
+        
+        # Load all devices in parallel
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            tapo_future = executor.submit(load_tapo_devices)
+            meross_future = executor.submit(lambda: run_in_meross_loop(get_meross_status_async()))
+            arlec_future = executor.submit(get_arlec_status)
+            
+            # Matter devices
+            def load_matter():
+                if not MATTER_AVAILABLE:
+                    return []
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    all_matter = get_all_matter_devices()
+                    async def load_all():
+                        tasks = [get_matter_status(d['device_id'], d.get('ip'), d.get('port', 5540), d.get('name'))
+                                for d in all_matter]
+                        return await asyncio.gather(*tasks, return_exceptions=True)
+                    if all_matter:
+                        results = loop.run_until_complete(load_all())
+                        return [r for r in results if not isinstance(r, Exception)]
+                    return []
+                finally:
+                    loop.close()
+            
+            matter_future = executor.submit(load_matter)
+            
+            tapo_devices = tapo_future.result()
+            meross_status = meross_future.result()
+            arlec_status = arlec_future.result()
+            matter_status = matter_future.result()
+        
+        # Format device statuses for collection
+        device_statuses = {
+            'tapo': tapo_devices,
+            'meross': meross_status,
+            'arlec': arlec_status,
+            'matter': matter_status
+        }
+        
+        # Collect and save
+        result = collect_and_save(device_statuses, region=region)
+        
+        if result.get('success'):
+            print(f"[DATA COLLECTION] Collected {result.get('records_saved', 0)} device usage records")
+        else:
+            print(f"[DATA COLLECTION] Error: {result.get('error', 'Unknown error')}")
+            
+    except Exception as e:
+        print(f"[DATA COLLECTION] Background collection error: {e}")
+
+
+def collect_device_usage_30_seconds():
+    """Collect device usage data every 30 seconds (adds to buffer)"""
+    if not DATA_COLLECTION_AVAILABLE:
+        return
+    
+    try:
+        region = 'VIC1'  # Default region
+        
+        # Load all devices (same logic as 5-minute collection)
+        def load_tapo_devices():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                tapo_devices = []
+                tapo_tasks = []
+                
+                for name, ip in KNOWN_DEVICES.items():
+                    if 'tapo' in name.lower():
+                        tapo_tasks.append((name, ip, None, None, name))
+                
+                for device_id, device_info in tapo_devices_storage.items():
+                    ip = device_info.get('ip')
+                    email = device_info.get('email')
+                    password = device_info.get('password')
+                    device_name = device_info.get('name', device_id)
+                    tapo_tasks.append((device_id, ip, email, password, device_name))
+                
+                async def load_all():
+                    tasks = [get_tapo_status(ip, email, password, device_name) 
+                            for device_id, ip, email, password, device_name in tapo_tasks]
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    for i, result in enumerate(results):
+                        if not isinstance(result, Exception):
+                            device_id = tapo_tasks[i][0]
+                            result['id'] = device_id
+                            tapo_devices.append(result)
+                
+                if tapo_tasks:
+                    loop.run_until_complete(load_all())
+                return tapo_devices
+            finally:
+                loop.close()
+        
+        # Load all devices in parallel
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            tapo_future = executor.submit(load_tapo_devices)
+            meross_future = executor.submit(lambda: run_in_meross_loop(get_meross_status_async()))
+            arlec_future = executor.submit(get_arlec_status)
+            
+            def load_matter():
+                if not MATTER_AVAILABLE:
+                    return []
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    all_matter = get_all_matter_devices()
+                    async def load_all():
+                        tasks = [get_matter_status(d['device_id'], d.get('ip'), d.get('port', 5540), d.get('name'))
+                                for d in all_matter]
+                        return await asyncio.gather(*tasks, return_exceptions=True)
+                    if all_matter:
+                        results = loop.run_until_complete(load_all())
+                        return [r for r in results if not isinstance(r, Exception)]
+                    return []
+                finally:
+                    loop.close()
+            
+            matter_future = executor.submit(load_matter)
+            
+            tapo_devices = tapo_future.result()
+            meross_status = meross_future.result()
+            arlec_status = arlec_future.result()
+            matter_status = matter_future.result()
+        
+        # Format device statuses
+        device_statuses = {
+            'tapo': tapo_devices,
+            'meross': meross_status,
+            'arlec': arlec_status,
+            'matter': matter_status
+        }
+        
+        # Add to 30-second buffer (this will aggregate automatically at 5-minute intervals)
+        from data_collection.device_usage_collector import collect_and_save
+        result = collect_and_save(device_statuses, region=region)
+        
+        # Only print if we actually saved aggregated records (every 5 minutes)
+        if result.get('success') and result.get('records_saved', 0) > 0:
+            print(f"[DATA COLLECTION] Aggregated and saved {result.get('records_saved', 0)} device usage records (5-min avg)")
+            
+    except Exception as e:
+        print(f"[DATA COLLECTION] 30-second collection error: {e}")
+
+
+def start_data_collection_scheduler():
+    """Start background scheduler for device usage collection (every 30 seconds)"""
+    if not DATA_COLLECTION_AVAILABLE:
+        print("[DATA COLLECTION] Module not available, skipping scheduler")
+        return
+    
+    try:
+        import schedule
+        
+        # Schedule collection every 30 seconds (adds to buffer)
+        schedule.every(30).seconds.do(collect_device_usage_30_seconds)
+        
+        # Run scheduler in background thread
+        def run_scheduler():
+            while True:
+                schedule.run_pending()
+                time.sleep(1)
+        
+        scheduler_thread = Thread(target=run_scheduler, daemon=True)
+        scheduler_thread.start()
+        
+        print("[DATA COLLECTION] Background scheduler started (every 30 seconds, aggregates to 5-min intervals)")
+        
+        # Run initial collection after 30 seconds (give server time to initialize)
+        def initial_collection():
+            time.sleep(30)
+            collect_device_usage_30_seconds()
+        
+        initial_thread = Thread(target=initial_collection, daemon=True)
+        initial_thread.start()
+        
+    except ImportError:
+        print("[WARNING] 'schedule' library not found. Install with: pip install schedule")
+        print("[DATA COLLECTION] Background scheduler not started")
+    except Exception as e:
+        print(f"[WARNING] Failed to start data collection scheduler: {e}")
+
+
+# Initialization flag to prevent multiple initializations
+_initialized = False
+
+def initialize_app():
+    """Initialize the application (devices, connections, etc.)"""
+    global _initialized
+    
+    if _initialized:
+        return
+    
+    try:
+        # Load dynamically added Tapo devices from file
+        load_tapo_devices()
+    except Exception as e:
+        print(f"[WARNING] Failed to load Tapo devices: {e}")
+    
+    try:
+        # Initialize Arlec (Tuya Cloud)
+        init_arlec()
+    except Exception as e:
+        print(f"[WARNING] Failed to initialize Arlec: {e}")
+    
+    try:
+        # Initialize Meross with dedicated event loop
+        run_async_init()
+    except Exception as e:
+        print(f"[WARNING] Failed to initialize Meross: {e}")
+    
+    # Start data collection scheduler (if available) - only for local development
+    # On Vercel, cron jobs handle data collection
+    is_vercel = os.getenv('VERCEL') is not None or os.getenv('VERCEL_ENV') is not None
+    if not is_vercel:
+        try:
+            start_data_collection_scheduler()
+        except Exception as e:
+            print(f"[WARNING] Failed to start data collection scheduler: {e}")
+    
+    _initialized = True
+
+
+# Initialize on module import (for Vercel serverless functions)
+# This will run on cold start
+# Use lazy initialization to avoid blocking on import
+try:
+    initialize_app()
+except Exception as e:
+    print(f"[WARNING] Initialization error (will retry on first request): {e}")
+
+
 if __name__ == '__main__':
     print("=" * 60)
     print("Smart Home Control Server")
     print("=" * 60)
-
-    # Clear legacy timeseries cache on startup
-    print("\nClearing legacy cache...")
-    clear_legacy_cache()
-
-    # Load dynamically added Tapo devices from file
-    print("\nLoading Tapo devices from file...")
-    load_tapo_devices()
-
-    # Initialize Arlec (Tuya Cloud)
-    print("\nInitializing Arlec connection...")
-    init_arlec()
-
-    # Initialize Meross with dedicated event loop
-    print("\nInitializing Meross connection...")
-    run_async_init()
 
     print("\n[OK] Server ready!")
     print("\nOpen your browser to:")
