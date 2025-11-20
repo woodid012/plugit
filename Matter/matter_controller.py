@@ -9,7 +9,34 @@ from pathlib import Path
 
 # Add parent directory to path to import credentials
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from IoS_logins import MATTER_DEVICES, get_all_matter_devices
+import os
+import json
+
+# Import Matter device configuration with fallback
+try:
+    import importlib
+    _ios_logins_module = importlib.import_module('IoS_logins')
+    MATTER_DEVICES = _ios_logins_module.MATTER_DEVICES
+    get_all_matter_devices = _ios_logins_module.get_all_matter_devices
+except (ImportError, ModuleNotFoundError):
+    # Fallback to environment variables
+    try:
+        matter_devices_str = os.getenv('MATTER_DEVICES', '{}')
+        MATTER_DEVICES = json.loads(matter_devices_str) if matter_devices_str else {}
+    except:
+        MATTER_DEVICES = {}
+    
+    def get_all_matter_devices():
+        """Fallback function for get_all_matter_devices"""
+        devices = []
+        for device_id, device_info in MATTER_DEVICES.items():
+            devices.append({
+                'device_id': device_info.get('device_id', device_id),
+                'ip': device_info.get('ip'),
+                'name': device_info.get('name', device_id),
+                'port': device_info.get('port', 5540)
+            })
+        return devices
 
 # Try to import Matter libraries - support multiple options
 try:

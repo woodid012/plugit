@@ -15,15 +15,18 @@ from pymongo.server_api import ServerApi
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import MongoDB credentials from centralized config
+import os
 try:
-    from IoS_logins import MONGO_URI, MONGO_DB_NAME, MONGO_COLLECTION_NAME
-    DB_NAME = MONGO_DB_NAME
-    PRICE_COLLECTION_NAME = MONGO_COLLECTION_NAME
-except ImportError:
-    # Fallback if IoS_logins.py not available
-    MONGO_URI = "mongodb+srv://NEMprice:test_smart123@cluster0.tm9wpue.mongodb.net/?appName=Cluster0"
-    DB_NAME = "nem_prices"
-    PRICE_COLLECTION_NAME = "price_data"
+    import importlib
+    _ios_logins_module = importlib.import_module('IoS_logins')
+    MONGO_URI = _ios_logins_module.MONGO_URI
+    DB_NAME = _ios_logins_module.MONGO_DB_NAME
+    PRICE_COLLECTION_NAME = _ios_logins_module.MONGO_COLLECTION_NAME
+except (ImportError, ModuleNotFoundError):
+    # Fallback to environment variables or defaults
+    MONGO_URI = os.getenv('MONGO_URI', "mongodb+srv://NEMprice:test_smart123@cluster0.tm9wpue.mongodb.net/?appName=Cluster0")
+    DB_NAME = os.getenv('MONGO_DB_NAME', "nem_prices")
+    PRICE_COLLECTION_NAME = os.getenv('MONGO_COLLECTION_NAME', "price_data")
 
 # Device usage collection name
 USAGE_COLLECTION_NAME = "device_usage"
