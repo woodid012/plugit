@@ -71,12 +71,6 @@ jobs:
         run: |
           cd power_price
           python -c "from mongodb_sync import sync_to_mongodb; sync_to_mongodb(force_refresh=False)"
-        env:
-          # MongoDB credentials should be in IoS_logins.py or environment variables
-          # If using environment variables, uncomment and set:
-          # MONGO_URI: ${{ secrets.MONGO_URI }}
-          # MONGO_DB_NAME: ${{ secrets.MONGO_DB_NAME }}
-          # MONGO_COLLECTION_NAME: ${{ secrets.MONGO_COLLECTION_NAME }}
       
       - name: Check sync result
         if: failure()
@@ -108,8 +102,6 @@ jobs:
         run: |
           cd power_price
           python -c "from mongodb_sync import sync_historical_only; sync_historical_only(hours_back=1, force_refresh=False)"
-        env:
-          # MongoDB credentials should be in IoS_logins.py or environment variables
       
       - name: Check sync result
         if: failure()
