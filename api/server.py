@@ -243,6 +243,17 @@ async def init_meross():
     """Initialize Meross connection"""
     global meross_manager, meross_http_client, meross_devices
 
+    # Check if already initialized to avoid unnecessary logins
+    if meross_http_client is not None and meross_manager is not None:
+        try:
+            # Verify the connection is still valid by checking devices
+            if meross_devices:
+                print(f"[OK] Meross: Already initialized with {len(meross_devices)} devices")
+                return
+        except Exception:
+            # Connection might be stale, reinitialize
+            pass
+
     try:
         # Use AP (Asia-Pacific) server to avoid redirect
         meross_http_client = await MerossHttpClient.async_from_user_password(
@@ -390,7 +401,17 @@ async def control_tapo(ip, action, email=None, password=None):
 
 async def get_meross_status_async():
     """Get all Meross devices status (async)"""
-    global meross_devices
+    global meross_devices, meross_manager, meross_http_client, meross_loop
+
+    # Lazy initialization: only initialize Meross when actually needed
+    # First ensure the event loop is running
+    if meross_loop is None:
+        # Event loop not started yet - this shouldn't happen, but handle it gracefully
+        print("[WARNING] Meross event loop not initialized, initializing now...")
+        # We can't start the loop from here, so we'll need to use the current loop
+        await init_meross()
+    elif meross_manager is None or meross_http_client is None or not meross_devices:
+        await init_meross()
 
     devices_status = []
 
@@ -694,7 +715,17 @@ async def control_matter(device_id, action, ip=None, port=5540):
 
 async def control_meross_async(uuid, action):
     """Control a Meross device (async)"""
-    global meross_devices
+    global meross_devices, meross_manager, meross_http_client, meross_loop
+
+    # Lazy initialization: only initialize Meross when actually needed
+    # First ensure the event loop is running
+    if meross_loop is None:
+        # Event loop not started yet - this shouldn't happen, but handle it gracefully
+        print("[WARNING] Meross event loop not initialized, initializing now...")
+        # We can't start the loop from here, so we'll need to use the current loop
+        await init_meross()
+    elif meross_manager is None or meross_http_client is None or not meross_devices:
+        await init_meross()
 
     try:
         device = None
@@ -2050,11 +2081,23 @@ def initialize_app():
     except Exception as e:
         print(f"[WARNING] Failed to initialize Arlec: {e}")
     
+    # Meross initialization is now lazy - only happens when actually needed
+    # This prevents excessive logins on Vercel serverless functions
+    # The Meross event loop is still started, but login only happens on first use
     try:
-        # Initialize Meross with dedicated event loop
-        run_async_init()
+        # Start the Meross event loop thread (but don't login yet)
+        global meross_loop, meross_loop_thread
+        if meross_loop_thread is None or not meross_loop_thread.is_alive():
+            meross_loop_thread = Thread(target=start_meross_loop, daemon=True)
+            meross_loop_thread.start()
+            time.sleep(0.5)  # Wait for loop to be ready
+            # Set meross_loop reference after it's created
+            if meross_loop is None:
+                # The loop will be set in start_meross_loop, but we need to wait a bit
+                time.sleep(0.1)
+        print("[INFO] Meross event loop started (lazy login on first use)")
     except Exception as e:
-        print(f"[WARNING] Failed to initialize Meross: {e}")
+        print(f"[WARNING] Failed to start Meross event loop: {e}")
     
     # Start data collection scheduler (if available) - only for local development
     # On Vercel, cron jobs handle data collection
@@ -2068,13 +2111,19 @@ def initialize_app():
     _initialized = True
 
 
-# Initialize on module import (for Vercel serverless functions)
-# This will run on cold start
-# Use lazy initialization to avoid blocking on import
-try:
-    initialize_app()
-except Exception as e:
-    print(f"[WARNING] Initialization error (will retry on first request): {e}")
+# Don't initialize on module import for Vercel serverless functions
+# This prevents excessive Meross logins on every cold start
+# Initialization will happen lazily when actually needed (via ensure_initialized())
+# For local development, initialization happens on first request
+is_vercel = os.getenv('VERCEL') is not None or os.getenv('VERCEL_ENV') is not None
+if not is_vercel:
+    # Only auto-initialize for local development
+    try:
+        initialize_app()
+    except Exception as e:
+        print(f"[WARNING] Initialization error (will retry on first request): {e}")
+else:
+    print("[INFO] Vercel environment detected - using lazy initialization to reduce Meross logins")
 
 
 if __name__ == '__main__':
